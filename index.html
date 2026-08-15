@@ -118,6 +118,7 @@
   }
   button.tool{border:none;box-shadow:none;padding:8px 14px;background:transparent;}
   button.tool.active{background:var(--lav);box-shadow:inset 0 1px 3px rgba(120,90,160,.18);}
+  #btnCameraPoint.active{background:#e8f7ff;border-color:#67bfe8;color:#356f91;}
   button.ghost{background:rgba(255,255,255,.7);box-shadow:none;border-color:transparent;color:#9a8090;}
   button.small{padding:5px 12px;font-size:13px;pointer-events:auto;}
 
@@ -486,6 +487,7 @@
     </span>
     <button id="btnUndo" title="ひとつ戻す (Ctrl+Z)">↩️ もどす</button>
     <button id="btnClear" title="ぜんぶ消す">🗑️ ぜんぶけす</button>
+    <button id="btnCameraPoint" class="hidden" title="正確なカメラ主点 C を表示／非表示">📷 C: ON</button>
     <button id="btnSubmit" class="primary" title="判定！ (Enter)">✨ はんてい！</button>
   </div>
 </div>
@@ -1323,13 +1325,23 @@ function layoutCubes(shapes, W, H){
                               p.y>=CAMERA_PAD && p.y<=CAMERA_STAGE-CAMERA_PAD);
     const P=L.map(p=>({x:cxT+(p.x-CAMERA_STAGE/2)*K,
                        y:cyT+(p.y-CAMERA_STAGE/2)*K}));
+    const R=rotMat(s.rot.yaw,s.rot.pitch);
+    /* Exact vanishing points from the rotated world axes.  This avoids
+       intersecting nearly-parallel projected edges at huge coordinates. */
+    const exactVps=[[1,0,0],[0,1,0],[0,0,1]].map(axis=>{
+      const d=mv(R,axis);
+      if(Math.abs(d[2])<1e-10) return null;
+      return {x:cxT+(d[0]/d[2])*CAMERA_FOCAL*K,
+              y:cyT-(d[1]/d[2])*CAMERA_FOCAL*K};
+    });
     const pxs=P.map(p=>p.x), pys=P.map(p=>p.y);
     const bw=Math.max(...pxs)-Math.min(...pxs), bh=Math.max(...pys)-Math.min(...pys);
     const lxs=L.map(p=>p.x), lys=L.map(p=>p.y);
     const lbw=Math.max(...lxs)-Math.min(...lxs), lbh=Math.max(...lys)-Math.min(...lys);
     const fc=mv(rotMat(s.rot.yaw,s.rot.pitch),CUBE_FACES[s.shown].n);
     const hintDistanceM=Math.hypot(fc[0]+s.tx,fc[1]+s.ty,fc[2]+s.D)*MODEL_UNIT_M;
-    return { P, vis:s.vis, shown:s.shown, edges:s.edges, rot:s.rot,
+    return { P, cameraPoint:{x:cxT,y:cyT}, exactVps,
+             vis:s.vis, shown:s.shown, edges:s.edges, rot:s.rot,
              D:s.D, tx:s.tx, ty:s.ty, hintCentered:s.hintCentered,
              hintSize:s.hintSize, hintDistanceM, frameOk,
              tol: clamp(0.06*Math.max(bw,bh), 10, 26),
@@ -3171,6 +3183,7 @@ function resizeCanvases(){
    画面上でほぼ平行な組（＝消失点が無限遠）は null を返す。
    戻り値の並びは PARALLEL_GROUPS と同じで、[0]と[2]が横方向、[1]が縦方向。 */
 function vanishingPoints(c){
+  if(c.exactVps && c.exactVps.length===3) return c.exactVps;
   return PARALLEL_GROUPS.map(g=>{
     // いちばん「平行から遠い」2辺を選ぶと交点が数値的に安定する
     let bi=null, bj=null, best=0;
@@ -3191,15 +3204,42 @@ function vanishingPoints(c){
     return {x:p.x+d1.x*t, y:p.y+d1.y*t};
   });
 }
+
+/* Clip an infinite line to the visible world rectangle.  Canvas never sees
+   gigantic off-screen coordinates, so zooming out cannot bend or jitter guides. */
+function clippedLine(a,b,box){
+  const dx=b.x-a.x, dy=b.y-a.y;
+  if(!Number.isFinite(dx)||!Number.isFinite(dy)||Math.hypot(dx,dy)<1e-12) return null;
+  let lo=-Infinity, hi=Infinity;
+  const cut=(p,d,mn,mx)=>{
+    if(Math.abs(d)<1e-12) return p>=mn&&p<=mx;
+    let u=(mn-p)/d, v=(mx-p)/d;
+    if(u>v){ const q=u; u=v; v=q; }
+    lo=Math.max(lo,u); hi=Math.min(hi,v);
+    return lo<=hi;
+  };
+  if(!cut(a.x,dx,box.l,box.r)||!cut(a.y,dy,box.t,box.b)) return null;
+  return [{x:a.x+dx*lo,y:a.y+dy*lo},{x:a.x+dx*hi,y:a.y+dy*hi}];
+}
+function rayEndInView(from,toward,box){
+  if(toward.x>=box.l&&toward.x<=box.r&&toward.y>=box.t&&toward.y<=box.b) return toward;
+  const seg=clippedLine(from,toward,box);
+  if(!seg) return null;
+  const dx=toward.x-from.x,dy=toward.y-from.y;
+  const score=p=>(p.x-from.x)*dx+(p.y-from.y)*dy;
+  const end=score(seg[0])>score(seg[1])?seg[0]:seg[1];
+  return score(end)>0?end:null;
+}
 /* れんしゅうモードの答え合わせで、消失点とそこへ集まるパース線を見せる。
    消失点は画面外へ出ることが多いので、画面内なら丸印、画面外なら
    「この方向にあるよ」という印を画面のふちに置く。 */
 function drawVanishingAid(){
   const c=round.cubes[0];
   const vps=vanishingPoints(c);
+  const z=1/viewS, box=viewWorldBox();
   ctx.save();
   // ① 各辺から消失点へのパース線
-  ctx.setLineDash([5,7]); ctx.lineWidth=1.2;
+  ctx.setLineDash([5*z,7*z]); ctx.lineWidth=1.2*z;
   ctx.strokeStyle="rgba(122,106,184,.42)";
   vps.forEach((vp,gi)=>{
     if(!vp) return;
@@ -3207,29 +3247,27 @@ function drawVanishingAid(){
       const pa=c.P[a], pb=c.P[b];
       // 消失点に近いほうの端点から伸ばす（辺そのものは上書きしない）
       const near = Math.hypot(pa.x-vp.x,pa.y-vp.y) < Math.hypot(pb.x-vp.x,pb.y-vp.y) ? pa : pb;
-      ctx.beginPath(); ctx.moveTo(near.x,near.y); ctx.lineTo(vp.x,vp.y); ctx.stroke();
+      const end=rayEndInView(near,vp,box);
+      if(end){ ctx.beginPath(); ctx.moveTo(near.x,near.y); ctx.lineTo(end.x,end.y); ctx.stroke(); }
     }
   });
   // ② 地平線（横向きの消失点2つを結ぶ線＝目線の高さ）
   if(vps[0] && vps[2]){
-    ctx.setLineDash([12,8]); ctx.lineWidth=1.6;
+    ctx.setLineDash([12*z,8*z]); ctx.lineWidth=1.6*z;
     ctx.strokeStyle="rgba(58,160,148,.55)";
-    const dx=vps[2].x-vps[0].x, dy=vps[2].y-vps[0].y;
-    ctx.beginPath();
-    ctx.moveTo(vps[0].x-dx*4, vps[0].y-dy*4);
-    ctx.lineTo(vps[2].x+dx*4, vps[2].y+dy*4);
-    ctx.stroke();
+    const hs=clippedLine(vps[0],vps[2],box);
+    if(hs){ ctx.beginPath(); ctx.moveTo(hs[0].x,hs[0].y); ctx.lineTo(hs[1].x,hs[1].y); ctx.stroke(); }
   }
   ctx.setLineDash([]);
   // ③ 消失点そのもの。画面外なら、ふちに向きの印を出す
-  const box=viewWorldBox(), m=26;
+  const m=26*z;
   vps.forEach(vp=>{
     if(!vp) return;
     const inside = vp.x>box.l+m && vp.x<box.r-m && vp.y>box.t+m && vp.y<box.b-m;
     if(inside){
       ctx.fillStyle="#7a6ab8";
-      ctx.beginPath(); ctx.arc(vp.x,vp.y,6/viewS,0,7); ctx.fill();
-      ctx.strokeStyle="#fff"; ctx.lineWidth=2/viewS; ctx.stroke();
+      ctx.beginPath(); ctx.arc(vp.x,vp.y,6*z,0,7); ctx.fill();
+      ctx.strokeStyle="#fff"; ctx.lineWidth=2*z; ctx.stroke();
     }else{
       // 立方体の中心から消失点へ向かう線が、画面のふちを横切る点に印を置く
       const cx=(box.l+box.r)/2, cy=(box.t+box.b)/2;
@@ -3242,9 +3280,29 @@ function drawVanishingAid(){
       if(!isFinite(s)||s<0) return;
       const ex=cx+ux*s, ey=cy+uy*s;
       ctx.fillStyle="rgba(122,106,184,.55)";
-      ctx.beginPath(); ctx.arc(ex,ey,5/viewS,0,7); ctx.fill();
+      ctx.beginPath(); ctx.arc(ex,ey,5*z,0,7); ctx.fill();
     }
   });
+  ctx.restore();
+}
+
+/* Exact principal point C of the fixed camera.  Compact, constant screen size. */
+function drawCameraPoint(){
+  if(!round||!studyRun||!showCameraPoint) return;
+  const p=round.cubes[0]&&round.cubes[0].cameraPoint;
+  if(!p||!Number.isFinite(p.x)||!Number.isFinite(p.y)) return;
+  const z=1/viewS,arm=8*z,r=3.5*z;
+  ctx.save(); ctx.setLineDash([]); ctx.lineCap="round";
+  ctx.strokeStyle="rgba(255,255,255,.96)"; ctx.lineWidth=3.5*z;
+  ctx.beginPath(); ctx.moveTo(p.x-arm,p.y);ctx.lineTo(p.x+arm,p.y);
+  ctx.moveTo(p.x,p.y-arm);ctx.lineTo(p.x,p.y+arm);ctx.stroke();
+  ctx.strokeStyle="#1595c8";ctx.lineWidth=1.4*z;
+  ctx.beginPath();ctx.moveTo(p.x-arm,p.y);ctx.lineTo(p.x+arm,p.y);
+  ctx.moveTo(p.x,p.y-arm);ctx.lineTo(p.x,p.y+arm);ctx.stroke();
+  ctx.fillStyle="#fff";ctx.strokeStyle="#1595c8";ctx.lineWidth=1.5*z;
+  ctx.beginPath();ctx.arc(p.x,p.y,r,0,Math.PI*2);ctx.fill();ctx.stroke();
+  ctx.fillStyle="#0b6f99";ctx.font=`800 ${9*z}px "Segoe UI",sans-serif`;
+  ctx.textAlign="left";ctx.textBaseline="bottom";ctx.fillText("C",p.x+6*z,p.y-5*z);
   ctx.restore();
 }
 
@@ -3336,6 +3394,8 @@ function drawScene(){
     ctx.globalAlpha = 1;
     ctx.setTransform(dpr*viewS,0,0,dpr*viewS, dpr*viewX, dpr*viewY);
   }
+
+  drawCameraPoint();
 
   // eraser radius indicator
   if(state==="draw" && tool==="eraser" && hoverPos){
@@ -3986,6 +4046,11 @@ let state="menu", mode="normal", roundIdx=0, round=null, scores=[];
 let totalRounds=TOTAL_ROUNDS, practiceRounds=PRACTICE_ROUNDS, endlessRun=false;
 /* れんしゅうモード: 制限時間なし・記録対象外。判定すると消失点とパース線が見える */
 let studyRun=false;
+const CAMERA_POINT_KEY="cube-challenge-camera-point-v1";
+let showCameraPoint=(()=>{
+  try{ const v=localStorage.getItem(CAMERA_POINT_KEY); return v===null?true:v==="1"; }
+  catch(_){ return true; }
+})();
 let endDead=false, endDeadReason="";   // ランを終わらせたか／死因（"time"|"score"）
 let roundsInfo=[];   // {shot,baseShot,shotScale,strokes,score,practice,timedOut} per round
 let lastFinal=null;  // {avg,g,isBest,ttl}
@@ -4280,6 +4345,8 @@ function startGame(m, opts){
      （練習はタイマー自体が出ないので、ラダー先頭が「無制限の練習」に食われる） */
   endlessRun = (m==="endless");
   studyRun   = (m==="study");
+  $("#btnCameraPoint").classList.toggle("hidden",!studyRun);
+  refreshCameraPointButton();
   // れんしゅうは終わりなし＝結果画面を出さない（やめるまで好きなだけ描ける）
   totalRounds  = (endlessRun||studyRun) ? Infinity : TOTAL_ROUNDS;
   // れんしゅうは全ラウンドが本物のお題（ガイドなぞりの練習ラウンドは置かない）
@@ -5403,6 +5470,17 @@ $("#modePopup").addEventListener("click",e=>{   // カードの外側を押し�
   if(e.target===$("#modePopup")) $("#modePopup").classList.add("hidden");
 });
 $("#btnSubmit").addEventListener("click",()=>submit(false));
+function refreshCameraPointButton(){
+  const b=$("#btnCameraPoint");
+  b.textContent=showCameraPoint?"📷 C: ON":"📷 C: OFF";
+  b.classList.toggle("active",showCameraPoint);
+  b.title=tr("正確なカメラ主点 C を表示／非表示","Show / hide the exact camera principal point C");
+}
+$("#btnCameraPoint").addEventListener("click",e=>{
+  showCameraPoint=!showCameraPoint;
+  try{localStorage.setItem(CAMERA_POINT_KEY,showCameraPoint?"1":"0");}catch(_){}
+  refreshCameraPointButton();render();e.currentTarget.blur();
+});
 $("#btnNext").addEventListener("click",next);
 $("#btnUndo").addEventListener("click",()=>undo(false));   // 引数なしで渡すとEventが真になるので包む
 $("#btnClear").addEventListener("click",clearAll);
@@ -5649,7 +5727,11 @@ window.addEventListener("resize",()=>{
       p.x=nextLayout.cx+(lx-CAMERA_STAGE/2)*nextLayout.k;
       p.y=nextLayout.cy+(ly-CAMERA_STAGE/2)*nextLayout.k;
     };
-    round.cubes.forEach(c=>{ c.P.forEach(xf); c.tol*=ratio; });
+    round.cubes.forEach(c=>{
+      c.P.forEach(xf); xf(c.cameraPoint);
+      if(c.exactVps) c.exactVps.forEach(p=>{if(p)xf(p);});
+      c.tol*=ratio;
+    });
     round.targets.forEach(t2=>{
       xf(t2.pa); xf(t2.pb); t2.samples.forEach(xf);
       if(t2.pts) t2.pts.forEach(xf);
