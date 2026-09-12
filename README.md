@@ -20,6 +20,18 @@ alone works without those optional assets.
 
 Development check: `node tests/cylinders.cjs`.
 
+## Two-cube construction trainer
+
+Choose **🧊↕🧊 Два куба**. The perspective view contains only the completed
+reference cube **A**. Three small orthographic views (`TOP X/Z`, `FRONT X/Y`,
+`SIDE Z/Y`) show whether the missing cube **B** belongs above or below A and
+its offset along all three axes. The perspective face of B is never supplied.
+The camera uses deliberately steep angles; both cubes share all three
+vanishing points. The mode has no timer or leaderboard, and judging reveals
+the intended visible edges and perspective guides.
+
+Development check: `node tests/two-cubes.cjs`.
+
 1つの面だけをヒントに、立方体の残りを予測して描くパース練習ゲームです。
 A perspective-drawing game: you see one face of a cube — draw the rest!
 

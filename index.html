@@ -521,6 +521,9 @@
     <button class="modeBtn" id="btnModes" style="background:#f3f0ff;border-color:#c9b8f0;">
       <span><span class="mn">🎮 モードをえらぶ</span></span>
     </button>
+    <button class="modeBtn" data-mode="stack" style="background:#fff3df;border-color:#e5bc78;">
+      <span><span class="mn">🧊↕🧊 Два куба</span><br><span class="md">Один куб + проекции сверху, спереди и сбоку</span></span>
+    </button>
     <button class="modeBtn" data-mode="cylinder" style="background:#e9faf5;border-color:#a3d9c8;">
       <span><span class="mn">🥫 Цилиндры / Cylinders</span><br><span class="md">2 VP / 3 VP · точки схода · без таймера</span></span>
     </button>
@@ -548,6 +551,9 @@
     <button class="modeBtn" data-mode="study" style="background:#eef7ff;border-color:#a8cdf0;">
       <span><span class="mn">🎓 れんしゅう</span><br><span class="md">じかんむせいげん・きろくなし。はんてい後に消失点とパース線が見える</span></span>
       <span class="best" id="bestStudy"></span>
+    </button>
+    <button class="modeBtn" data-mode="stack" style="background:#fff3df;border-color:#e5bc78;">
+      <span><span class="mn">🧊↕🧊 Два куба</span><br><span class="md">Один куб + проекции сверху, спереди и сбоку</span></span>
     </button>
     <button class="modeBtn" data-mode="cylinder" style="background:#e9faf5;border-color:#a3d9c8;">
       <span><span class="mn">🥫 Цилиндры / Cylinders</span><br><span class="md">2 VP / 3 VP · точки схода · без таймера</span></span>
@@ -648,7 +654,7 @@ const eraserR = () => ERASER_R/viewS;
 const GAME_VER = "1.27";   // 公開バージョン
 /* 同じ公開バージョン内の採点hotfixもスクリーンショットから識別できるようにする。
    sw.js のCACHE名にも同じBUILD_IDを含め、旧1.27キャッシュを確実に更新する。 */
-const BUILD_ID = "20260912.cylinders.1";
+const BUILD_ID = "20260912.two-cubes.1";
 // ネイティブアプリ（Capacitor/App Store版）で動いているか
 const CAP = !!(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform());
 
@@ -1506,8 +1512,82 @@ function buildCylinderRound(W,H){
     timeLimit:TIME_LIMIT,noCube:true,twistOk:true,vpCount:cylinderVPCount};
 }
 
+/* Two cubes share one local coordinate system. A is the only perspective
+   reference shown; three orthographic diagrams specify B's translation. */
+function buildStackRound(W,H,attempt=0){
+  const rot={yaw:rndSign()*rnd(30,48)*DEG,pitch:rndSign()*rnd(27,42)*DEG};
+  const sx=rndSign(),sy=rndSign(),sz=rndSign();
+  const relation=[sx*(rng()<.5?.5:1),sy*2,sz*(rng()<.5?.5:1)];
+  const anchorOffset=relation.map(v=>-v/2),targetOffset=relation.map(v=>v/2);
+  const R=rotMat(rot.yaw,rot.pitch), D=10;
+  const at=offset=>{
+    const q=mv(R,offset);
+    return shapeOf(rot,D+q[2],q[0],q[1],TWIST_EXTRA3D);
+  };
+  const cubes=layoutCubes([at(anchorOffset),at(targetOffset)],W,H);
+  const anchor=cubes[0],target=cubes[1],targets=[],allSegs=[];
+  const screen=cameraScreenLayout(W,H);
+  const eye=[-R[2][0]*D,-R[2][1]*D,-R[2][2]*D];
+  const worldPoint=(a,b,t)=>a.map((v,i)=>targetOffset[i]+v+(b[i]-v)*t);
+  const project=w=>{
+    const q=mv(R,w),z=q[2]+D;
+    return {x:screen.cx+q[0]/z*CAMERA_FOCAL*screen.k,
+            y:screen.cy-q[1]/z*CAMERA_FOCAL*screen.k};
+  };
+  const occluded=w=>{
+    let lo=0,hi=1;
+    for(let i=0;i<3;i++){
+      const d=w[i]-eye[i],mn=anchorOffset[i]-1,mx=anchorOffset[i]+1;
+      if(Math.abs(d)<1e-12){if(eye[i]<mn||eye[i]>mx)return false;continue;}
+      let a=(mn-eye[i])/d,b=(mx-eye[i])/d;if(a>b){const x=a;a=b;b=x;}
+      lo=Math.max(lo,a);hi=Math.min(hi,b);if(lo>hi)return false;
+    }
+    return hi>1e-8&&lo<1-1e-7;
+  };
+  const addSeg=(pa,pb,c,extend=0)=>{
+    const dx=(pb.x-pa.x)*extend,dy=(pb.y-pa.y)*extend;
+    allSegs.push({pa:{x:pa.x-dx,y:pa.y-dy},pb:{x:pb.x+dx,y:pb.y+dy},
+      tol:c.tol,scoreTol:c.scoreTol});
+  };
+  // The reference cube's construction lines are always free ink.
+  for(const e of anchor.edges) addSeg(anchor.P[e.a],anchor.P[e.b],anchor,1);
+  for(const e of target.edges){
+    const pa=target.P[e.a],pb=target.P[e.b];
+    addSeg(pa,pb,target,1);
+    if(!e.visible) continue;
+    const va=CUBE_V[e.a],vb=CUBE_V[e.b],visible=t=>!occluded(worldPoint(va,vb,t));
+    const runs=[];let prev=visible(0),start=prev?0:null,lastT=0;
+    for(let i=1;i<=48;i++){
+      const t=i/48,cur=visible(t);
+      if(cur!==prev){
+        let a=lastT,b=t;
+        for(let k=0;k<18;k++){const m=(a+b)/2;if(visible(m)===prev)a=m;else b=m;}
+        const cut=(a+b)/2;
+        if(prev)runs.push([start,cut]);else start=cut;
+      }
+      prev=cur;lastT=t;
+    }
+    if(prev)runs.push([start,1]);
+    for(const [u,v] of runs){
+      if(v-u<1e-4)continue;
+      const p0=project(worldPoint(va,vb,u)),p1=project(worldPoint(va,vb,v));
+      const len=Math.hypot(p1.x-p0.x,p1.y-p0.y),n=clamp(Math.round(len/8),8,40),samples=[];
+      for(let i=0;i<=n;i++)samples.push({x:p0.x+(p1.x-p0.x)*i/n,y:p0.y+(p1.y-p0.y)*i/n});
+      targets.push({cube:1,pa:p0,pb:p1,samples,tol:target.tol,scoreTol:target.scoreTol,
+        score:0,hidden:false});
+    }
+  }
+  if((targets.length<6||!cubes.every(c=>c.frameOk))&&attempt<24)
+    return buildStackRound(W,H,attempt+1);
+  return {mode:"stack",practice:false,cubes,targets,allSegs,shared:true,result:null,
+    twist:null,hintLines:null,extraLen:0,crossHidden:null,scoreLayout:screen,
+    timeLimit:TIME_LIMIT,noCube:true,twistOk:true,stackRelation:relation,
+    stackPlacement:sy>0?"above":"below"};
+}
+
 function genRound(mode, practice, W, H){
   if(mode==="cylinder") return buildCylinderRound(W,H);
+  if(mode==="stack") return buildStackRound(W,H);
   /* 8回に1回（slot 6）を強いアオリ／フカンに固定する。抽選運による難易度差をなくす。
      変化球とは重ねない。★エンドレスでは slot6 の到達時点で endTime が常に最短の
      8秒なので、`endTime>8` は一度も真にならない＝エンドレスに強傾斜は出ない
@@ -3394,6 +3474,50 @@ function drawCylinderDirection(){
   ctx.fillStyle="#527e89";ctx.font=`${12*z}px sans-serif`;
   ctx.fillText("2-й эллипс: центр здесь",x+10*z,y+19*z);ctx.restore();
 }
+function drawStackAnchor(c){
+  ctx.save();
+  for(let fi=0;fi<CUBE_FACES.length;fi++){
+    if(!c.vis[fi]) continue;
+    const ix=CUBE_FACES[fi].idx;
+    ctx.beginPath();ix.forEach((vi,i)=>i?ctx.lineTo(c.P[vi].x,c.P[vi].y):ctx.moveTo(c.P[vi].x,c.P[vi].y));
+    ctx.closePath();ctx.fillStyle="rgba(91,116,139,.10)";ctx.fill();
+  }
+  ctx.strokeStyle="#44515b";ctx.lineWidth=3;
+  for(const e of c.edges){
+    if(!e.visible) continue;
+    ctx.beginPath();ctx.moveTo(c.P[e.a].x,c.P[e.a].y);ctx.lineTo(c.P[e.b].x,c.P[e.b].y);ctx.stroke();
+  }
+  const q=c.P.slice(0,8),cx=q.reduce((s,p)=>s+p.x,0)/8,cy=q.reduce((s,p)=>s+p.y,0)/8,z=1/viewS;
+  ctx.fillStyle="#33434f";ctx.font=`bold ${13*z}px sans-serif`;ctx.textAlign="center";
+  ctx.fillText("A · дан",cx,cy);ctx.restore();
+}
+function drawStackProjections(){
+  const rel=round.stackRelation;if(!rel)return;
+  const size=Math.min(78,Math.max(62,(W-32)/3)),gap=5,pad=7;
+  const total=3*size+2*gap,x0=Math.max(8,(W-total)/2),y0=82;
+  const views=[{name:"TOP X/Z",u:0,v:2},{name:"FRONT X/Y",u:0,v:1},{name:"SIDE Z/Y",u:2,v:1}];
+  ctx.save();ctx.setTransform(dpr,0,0,dpr,0,0);
+  ctx.fillStyle="rgba(255,255,255,.94)";ctx.strokeStyle="rgba(93,73,100,.22)";ctx.lineWidth=1;
+  ctx.beginPath();ctx.roundRect(x0-5,y0-34,total+10,size+40,9);ctx.fill();ctx.stroke();
+  ctx.font="bold 11px sans-serif";ctx.textAlign="left";ctx.fillStyle="#6e586d";
+  ctx.fillText(`A — дан · B — ${round.stackPlacement==="above"?"сверху":"снизу"}`,x0,y0-20);
+  const part=v=>Math.abs(v)===2?"1":Math.abs(v)===1?"½":"¼";
+  const signed=v=>(v>0?"+":"−")+part(v);
+  ctx.font="10px sans-serif";ctx.fillText(`B: X ${signed(rel[0])} · Y ${signed(rel[1])} · Z ${signed(rel[2])} куба`,x0,y0-7);
+  views.forEach((v,i)=>{
+    const x=x0+i*(size+gap),y=y0,unit=(size-2*pad)/5,cx=x+size/2,cy=y+size/2;
+    ctx.fillStyle="rgba(82,105,124,.18)";ctx.strokeStyle="#566b79";ctx.setLineDash([]);
+    ctx.fillRect(cx-unit,cy-unit,2*unit,2*unit);ctx.strokeRect(cx-unit,cy-unit,2*unit,2*unit);
+    const bx=cx+rel[v.u]*unit,by=cy-rel[v.v]*unit;
+    ctx.strokeStyle="#db6f91";ctx.lineWidth=2;ctx.setLineDash([4,3]);
+    ctx.strokeRect(bx-unit,by-unit,2*unit,2*unit);ctx.setLineDash([]);
+    ctx.font="bold 10px sans-serif";ctx.fillStyle="#40535f";ctx.fillText("A",cx-3,cy+3);
+    ctx.fillStyle="#c65176";ctx.fillText("B",bx-3,by+3);
+    ctx.font="9px sans-serif";ctx.textAlign="center";ctx.fillStyle="#756572";
+    ctx.fillText(v.name,x+size/2,y+size-3);ctx.textAlign="left";
+  });
+  ctx.restore();
+}
 function drawCameraPoint(){
   if(!round||!studyRun||!showCameraPoint||round.mode==="cylinder") return;
   const p=round.cubes[0]&&round.cubes[0].cameraPoint;
@@ -3424,6 +3548,7 @@ function drawScene(){
   if(round.mode==="cylinder") drawCylinderAid();
 
   const showAnswer = (state==="roundResult");
+  if(round.mode==="stack") drawStackAnchor(round.cubes[0]);
 
   if(showAnswer){
     if(round.crossHidden){
@@ -3505,6 +3630,7 @@ function drawScene(){
 
   if(round.mode==="cylinder") drawCylinderDirection();
   drawCameraPoint();
+  if(round.mode==="stack") drawStackProjections();
 
   // eraser radius indicator
   if(state==="draw" && tool==="eraser" && hoverPos){
@@ -4126,6 +4252,9 @@ const MODES={
   cylinder:{name:tr("🥫 円柱","🥫 Cylinders"),
     hint:tr("奥の楕円を一周と側面の接線2本。長さ＝直径。矢印は奥行きの向き。時間制限なし。",
       "В отмеченном центре нарисуйте второй эллипс целиком и соедините основания двумя касательными. Длина = диаметр.")},
+  stack:{name:tr("🧊↕🧊 2つの立方体","🧊↕🧊 Two Cubes"),
+    hint:tr("Aを手がかりに、3方向の図どおりBを上か下へ描こう。Bの透視図は表示されない。",
+      "По трём проекциям постройте B над или под данным кубом A. Перспективная грань B не показана.")},
   endless:{name:tr("♾️ 無限モード","♾️ Endless"),
           hint:tr("時間はどんどんみじかくなる！合格ラインを下回ったら終わりだよ",
                   "Time keeps shrinking — drop below the pass line and it's over!")},
@@ -4190,6 +4319,9 @@ function fixedCameraSpec(distanceM){
   if(typeof mode!=="undefined" && mode==="cylinder") return tr(
     `円柱：直径1m・長さ1m / 固定カメラ / b${BUILD_ID}`,
     `${cylinderVPCount} VP · диаметр 1м · длина 1м · VP* — за экраном, уменьшите масштаб / b${BUILD_ID}`);
+  if(typeof mode!=="undefined" && mode==="stack") return tr(
+    `2つの立方体・難しい角度・三面図 / b${BUILD_ID}`,
+    `Два куба · сложный ракурс · TOP/FRONT/SIDE задают положение B / b${BUILD_ID}`);
   const base=tr(
     `立方体は1辺${CUBE_EDGE_M.toFixed(2)}m（1m³）　CAM: FOV ${CAMERA_FOV_DEG.toFixed(1)}° / f=${CAMERA_FOCAL_NORM.toFixed(3)} / 主点中央 / ROLL 0°`,
     `Cube edges ${CUBE_EDGE_M.toFixed(2)}m (1m³)  CAM: FOV ${CAMERA_FOV_DEG.toFixed(1)}° / f=${CAMERA_FOCAL_NORM.toFixed(3)} / centred principal point / ROLL 0°`);
@@ -4460,7 +4592,7 @@ function startGame(m, opts){
   /* チャレンジ＝エンドレス・サバイバル。練習ラウンドは置かない
      （練習はタイマー自体が出ないので、ラダー先頭が「無制限の練習」に食われる） */
   endlessRun = (m==="endless");
-  studyRun   = (m==="study" || m==="cylinder");
+  studyRun   = (m==="study" || m==="cylinder" || m==="stack");
   $("#btnCameraPoint").classList.toggle("hidden",!studyRun || m==="cylinder");
   $("#btnCylinderVP").classList.toggle("hidden",m!=="cylinder");
   $("#btnCylinderVP").textContent=`${cylinderVPCount} VP ⇄ ${cylinderVPCount===3?2:3} VP`;
