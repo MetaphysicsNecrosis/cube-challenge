@@ -100,7 +100,7 @@
   #bottomControls{display:contents;}
   #toolbar{
     position:fixed;bottom:16px;left:50%;transform:translateX(-50%);
-    display:flex;gap:8px;z-index:5;align-items:center;
+    display:flex;gap:8px;z-index:9;align-items:center;
     width:max-content;max-width:calc(100vw - 150px);
     flex-wrap:wrap;justify-content:center;
   }
@@ -123,7 +123,7 @@
   button.ghost{background:rgba(255,255,255,.7);box-shadow:none;border-color:transparent;color:#9a8090;}
   button.small{padding:5px 12px;font-size:13px;pointer-events:auto;}
   #stackProjectionDock{
-    position:fixed;right:14px;bottom:82px;z-index:8;pointer-events:none;
+    position:fixed;right:198px;bottom:14px;z-index:8;pointer-events:none;
     width:min(480px,calc(100vw - 225px));box-sizing:border-box;
     padding:9px 10px 8px;background:rgba(255,255,255,.96);
     border:2px solid #e1c28e;border-radius:13px;
@@ -678,7 +678,7 @@ const eraserR = () => ERASER_R/viewS;
 const GAME_VER = "1.27";   // 公開バージョン
 /* 同じ公開バージョン内の採点hotfixもスクリーンショットから識別できるようにする。
    sw.js のCACHE名にも同じBUILD_IDを含め、旧1.27キャッシュを確実に更新する。 */
-const BUILD_ID = "20260912.two-cubes.4";
+const BUILD_ID = "20260912.two-cubes.5";
 // ネイティブアプリ（Capacitor/App Store版）で動いているか
 const CAP = !!(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform());
 

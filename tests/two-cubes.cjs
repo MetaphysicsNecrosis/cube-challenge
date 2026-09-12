@@ -5,6 +5,7 @@ const assert = require('node:assert/strict');
 const html = fs.readFileSync(path.join(__dirname, '../index.html'), 'utf8');
 const script = html.match(/<script>\s*([\s\S]*?)<\/script>/)[1];
 new vm.Script(script);
+assert.match(html,/#stackProjectionDock\{[\s\S]*?right:198px;bottom:14px;/,'Landscape projections must stay left of the right-side toolbar');
 const context = vm.createContext({assert,console});
 const helpers=script.slice(script.indexOf('function hashSeed('),script.indexOf('const randomSeed'));
 const core=script.slice(script.indexOf('const CUBE_V ='),script.indexOf('const gradeOf ='));
