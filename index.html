@@ -488,6 +488,7 @@
     <button id="btnUndo" title="ひとつ戻す (Ctrl+Z)">↩️ もどす</button>
     <button id="btnClear" title="ぜんぶ消す">🗑️ ぜんぶけす</button>
     <button id="btnCameraPoint" class="hidden" title="正確なカメラ主点 C を表示／非表示">📷 C: ON</button>
+    <button id="btnCylinderVP" class="hidden" title="Переключить перспективу цилиндра и начать новое задание">3 VP ⇄ 2 VP</button>
     <button id="btnSubmit" class="primary" title="判定！ (Enter)">✨ はんてい！</button>
   </div>
 </div>
@@ -520,6 +521,9 @@
     <button class="modeBtn" id="btnModes" style="background:#f3f0ff;border-color:#c9b8f0;">
       <span><span class="mn">🎮 モードをえらぶ</span></span>
     </button>
+    <button class="modeBtn" data-mode="cylinder" style="background:#e9faf5;border-color:#a3d9c8;">
+      <span><span class="mn">🥫 Цилиндры / Cylinders</span><br><span class="md">2 VP / 3 VP · точки схода · без таймера</span></span>
+    </button>
     <button id="btnSeedPlay" style="display:none;width:100%;background:#f2fbff;border-color:#bfe3ff;font-size:13.5px;">🔗 シードを入力して同じお題であそぶ</button>
     <div class="foot"><span style="opacity:.85">つくったひと：<a href="https://x.com/daromeon" target="_blank" rel="noopener" style="color:#e86f9e;text-decoration:none;font-weight:800;">@daromeon</a></span><span id="verLab" style="opacity:.6"></span></div>
     <div id="cameraRule">立方体は1辺1.00m（体積1m³）　カメラ：正方形画角65.3° / f=0.780 / 主点中央 / ロール0°</div>
@@ -544,6 +548,9 @@
     <button class="modeBtn" data-mode="study" style="background:#eef7ff;border-color:#a8cdf0;">
       <span><span class="mn">🎓 れんしゅう</span><br><span class="md">じかんむせいげん・きろくなし。はんてい後に消失点とパース線が見える</span></span>
       <span class="best" id="bestStudy"></span>
+    </button>
+    <button class="modeBtn" data-mode="cylinder" style="background:#e9faf5;border-color:#a3d9c8;">
+      <span><span class="mn">🥫 Цилиндры / Cylinders</span><br><span class="md">2 VP / 3 VP · точки схода · без таймера</span></span>
     </button>
     <button class="modeBtn" data-mode="endless">
       <span><span class="mn">♾️ 無限モード</span><br><span class="md">1ラウンドごとに時間がみじかく、ごうかくラインは高くなる</span></span>
@@ -641,7 +648,7 @@ const eraserR = () => ERASER_R/viewS;
 const GAME_VER = "1.27";   // 公開バージョン
 /* 同じ公開バージョン内の採点hotfixもスクリーンショットから識別できるようにする。
    sw.js のCACHE名にも同じBUILD_IDを含め、旧1.27キャッシュを確実に更新する。 */
-const BUILD_ID = "20260816.camera-c.1";
+const BUILD_ID = "20260912.cylinders.1";
 // ネイティブアプリ（Capacitor/App Store版）で動いているか
 const CAP = !!(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform());
 
@@ -1449,7 +1456,58 @@ function yCornerMinAngle(c){
 /* retry until every cube has enough drawable edges (rarely, an almost
    head-on cube ends up with zero visible non-shown edges → NaN scores)
    + Y字コーナーが90°未満（不自然パース）のお題も再抽選 */
+/* A unit-diameter, unit-length cylinder along local Y. Project actual 3D
+   circles and solve tangency in object space, rather than joining ellipse
+   extrema (which are generally not the silhouette contact points). */
+function buildCylinderRound(W,H){
+  const N=96, two=cylinderVPCount===2;
+  const rot={yaw:rndSign()*rnd(25,55)*DEG, pitch:two?0:-rnd(22,40)*DEG};
+  const R=rotMat(rot.yaw,rot.pitch), D=two?8:6.5;
+  const tx=rnd(-0.7,0.7), ty=two?-2.1:0;
+  const eye=[0,1,2].map(i=>-(R[0][i]*tx+R[1][i]*ty+R[2][i]*D));
+  const radial=Math.hypot(eye[0],eye[2]);
+  const phi=Math.atan2(eye[2],eye[0]), alpha=Math.acos(1/radial);
+  const contacts=[phi-alpha,phi+alpha], extra=[];
+  for(const y of [1,-1]) for(let i=0;i<N;i++){
+    const a=2*Math.PI*i/N; extra.push([Math.cos(a),y,Math.sin(a)]);
+  }
+  for(const a of contacts) for(const y of [1,-1]) extra.push([Math.cos(a),y,Math.sin(a)]);
+  extra.push([0,1,0],[0,-1,0]);
+  const c=layoutCubes([shapeOf(rot,D,tx,ty,extra)],W,H)[0];
+  c.P=c.P.slice(8); c.shown=0; c.vis=[false,false,false,false,false,false];
+  c.edges=[0,1].map(i=>({a:2*N+2*i,b:2*N+2*i+1,visible:true,inShown:false}));
+  c.hintDistanceM=Math.hypot(tx,ty+R[1][1],D+R[2][1])*MODEL_UNIT_M;
+  const layout=cameraScreenLayout(W,H), xs=c.P.map(p=>p.x),ys=c.P.map(p=>p.y);
+  const extent=Math.max(Math.max(...xs)-Math.min(...xs),Math.max(...ys)-Math.min(...ys));
+  c.scoreTol=clamp(0.045*extent/layout.k,10,22); c.tol=c.scoreTol*layout.k;
+  const near=c.P.slice(0,N), far=c.P.slice(N,2*N);
+  near.push(near[0]); far.push(far[0]);
+  const allSegs=[], targets=[];
+  const addSeg=(pa,pb,extend=0)=>{
+    const dx=(pb.x-pa.x)*extend,dy=(pb.y-pa.y)*extend;
+    allSegs.push({pa:{x:pa.x-dx,y:pa.y-dy},pb:{x:pb.x+dx,y:pb.y+dy},tol:c.tol,scoreTol:c.scoreTol});
+  };
+  let farLen=0;
+  for(let i=1;i<=N;i++){
+    addSeg(near[i-1],near[i]); addSeg(far[i-1],far[i]);
+    farLen+=Math.hypot(far[i].x-far[i-1].x,far[i].y-far[i-1].y);
+  }
+  targets.push({cube:0,pa:far[0],pb:far[0],pts:far,samples:far.slice(0,N),
+    len:farLen,tol:c.tol,scoreTol:c.scoreTol,score:0,hidden:false});
+  for(const e of c.edges){
+    const pa=c.P[e.a],pb=c.P[e.b],samples=[];
+    for(let i=0;i<=40;i++) samples.push({x:pa.x+(pb.x-pa.x)*i/40,y:pa.y+(pb.y-pa.y)*i/40});
+    targets.push({cube:0,pa,pb,samples,tol:c.tol,scoreTol:c.scoreTol,score:0,hidden:false});
+    addSeg(pa,pb,1);
+  }
+  addSeg(c.P[2*N+4],c.P[2*N+5],1);
+  return {mode:"cylinder",practice:false,cubes:[c],targets,allSegs,shared:null,result:null,
+    twist:null,hintLines:[near],extraLen:0,crossHidden:null,scoreLayout:layout,
+    timeLimit:TIME_LIMIT,noCube:true,twistOk:true,vpCount:cylinderVPCount};
+}
+
 function genRound(mode, practice, W, H){
+  if(mode==="cylinder") return buildCylinderRound(W,H);
   /* 8回に1回（slot 6）を強いアオリ／フカンに固定する。抽選運による難易度差をなくす。
      変化球とは重ねない。★エンドレスでは slot6 の到達時点で endTime が常に最短の
      8秒なので、`endTime>8` は一度も真にならない＝エンドレスに強傾斜は出ない
@@ -3005,12 +3063,12 @@ function scoreLogicalRound(round, strokes){
   const recognition=recognitionFloor(round,strokes,eff);
   const score=Math.round(100*Math.max(strictScore,recognition.score))/100;
   // まんまるの日は落書き判定を切る（「まるいね！でも今回は立方体だよ」が的外れになるため）
-  const doodle = round.twist==="maru" ? null : doodleKind(round, strokes, cov, prec, needLen);
+  const doodle = round.twist==="maru" || round.mode==="cylinder" ? null : doodleKind(round, strokes, cov, prec, needLen);
   /* 左右反転して描いてしまった人の検出（鏡の国の住人）。
      線を鏡像にして採点し直し、そちらの方が明らかに合っていれば反転ミスと判断する。
      ちゃんと描けている回は計算をスキップする。 */
   let mirrored=false;
-  if(cov<0.5 && round.targets.length){
+  if(cov<0.5 && round.targets.length && round.mode!=="cylinder"){
     /* 反転の軸は「ヒント面の左右の中心」。立方体全体のbbox中心だと奥行きの分だけ
        ずれてしまい判定できない。ダブルではキューブごとの軸を使う。 */
     const axes=round.cubes.map(c=>{
@@ -3234,6 +3292,7 @@ function rayEndInView(from,toward,box){
    消失点は画面外へ出ることが多いので、画面内なら丸印、画面外なら
    「この方向にあるよ」という印を画面のふちに置く。 */
 function drawVanishingAid(){
+  if(round.mode==="cylinder"){ drawCylinderAid(); return; }
   const c=round.cubes[0];
   const vps=vanishingPoints(c);
   const z=1/viewS, box=viewWorldBox();
@@ -3287,8 +3346,56 @@ function drawVanishingAid(){
 }
 
 /* Exact principal point C of the fixed camera.  Compact, constant screen size. */
+function drawCylinderAid(){
+  const c=round.cubes[0],box=viewWorldBox(),z=1/viewS;
+  const colors=["#398da0","#b98037","#8b64be"],vps=[c.exactVps[0],c.exactVps[2],c.exactVps[1]];
+  ctx.save();ctx.lineWidth=1*z;ctx.setLineDash([5*z,7*z]);
+  const line=(a,b)=>{const seg=clippedLine(a,b,box);if(seg){
+    ctx.beginPath();ctx.moveTo(seg[0].x,seg[0].y);ctx.lineTo(seg[1].x,seg[1].y);ctx.stroke();}};
+  ctx.strokeStyle="rgba(58,160,148,.4)";
+  line(vps[0],vps[1]);
+  // Construction directions within the given cap; cylinder sides use VP3.
+  const center=c.P[c.P.length-2];
+  vps.forEach((vp,i)=>{if(vp){ctx.strokeStyle=colors[i]+"50";line(center,vp);}});
+  if(state==="roundResult"){
+    ctx.strokeStyle=colors[2]+"70";
+    for(const e of c.edges) line(c.P[e.a],c.P[e.b]);
+  }
+  const m=42*z,inner={l:box.l+m,r:box.r-m,t:box.t+m,b:box.b-m};
+  const origin={x:(box.l+box.r)/2,y:(box.t+box.b)/2};
+  ctx.setLineDash([]);ctx.font=`bold ${12*z}px sans-serif`;ctx.textAlign="center";
+  vps.forEach((vp,i)=>{
+    if(!vp) return;
+    const inside=vp.x>=inner.l&&vp.x<=inner.r&&vp.y>=inner.t&&vp.y<=inner.b;
+    const marker=rayEndInView(origin,vp,inner);if(!marker)return;
+    ctx.fillStyle=colors[i];ctx.strokeStyle=colors[i];
+    if(inside){ctx.beginPath();ctx.arc(marker.x,marker.y,4*z,0,2*Math.PI);ctx.fill();}
+    else {
+      const len=Math.hypot(vp.x-origin.x,vp.y-origin.y),ux=(vp.x-origin.x)/len,uy=(vp.y-origin.y)/len;
+      ctx.beginPath();ctx.moveTo(marker.x-8*z*ux-4*z*uy,marker.y-8*z*uy+4*z*ux);
+      ctx.lineTo(marker.x,marker.y);ctx.lineTo(marker.x-8*z*ux+4*z*uy,marker.y-8*z*uy-4*z*ux);ctx.stroke();
+    }
+    ctx.fillText(`VP${i+1}${inside?"":" *"}`,marker.x,marker.y-10*z);
+  });
+  if(!vps[2]){ctx.fillStyle=colors[2];ctx.fillText("VP3 ∞ · боковые параллельны",origin.x,inner.t+14*z);}
+  ctx.restore();
+}
+function drawCylinderDirection(){
+  const p=round.cubes[0].P,a=p[p.length-2],b=p[p.length-1],z=1/viewS;
+  const len=Math.hypot(b.x-a.x,b.y-a.y),ux=(b.x-a.x)/len,uy=(b.y-a.y)/len;
+  const head=5*z,x=b.x,y=b.y;
+  ctx.save();ctx.strokeStyle="#78979e";ctx.lineWidth=1.5*z;
+  ctx.setLineDash([4*z,5*z]);
+  ctx.beginPath();ctx.moveTo(a.x,a.y);ctx.lineTo(x,y);
+  ctx.stroke();ctx.setLineDash([]);ctx.beginPath();
+  ctx.moveTo(x-head*(ux+uy),y-head*(uy-ux));ctx.lineTo(x,y);
+  ctx.lineTo(x-head*(ux-uy),y-head*(uy+ux));ctx.stroke();
+  ctx.beginPath();ctx.arc(x,y,4*z,0,Math.PI*2);ctx.stroke();
+  ctx.fillStyle="#527e89";ctx.font=`${12*z}px sans-serif`;
+  ctx.fillText("2-й эллипс: центр здесь",x+10*z,y+19*z);ctx.restore();
+}
 function drawCameraPoint(){
-  if(!round||!studyRun||!showCameraPoint) return;
+  if(!round||!studyRun||!showCameraPoint||round.mode==="cylinder") return;
   const p=round.cubes[0]&&round.cubes[0].cameraPoint;
   if(!p||!Number.isFinite(p.x)||!Number.isFinite(p.y)) return;
   const z=1/viewS,arm=8*z,r=3.5*z;
@@ -3314,6 +3421,7 @@ function drawScene(){
   // ここから先はワールド座標で描く（ズームは見え方だけの変換）
   ctx.setTransform(dpr*viewS,0,0,dpr*viewS, dpr*viewX, dpr*viewY);
   ctx.lineCap="round"; ctx.lineJoin="round";
+  if(round.mode==="cylinder") drawCylinderAid();
 
   const showAnswer = (state==="roundResult");
 
@@ -3325,7 +3433,7 @@ function drawScene(){
         ctx.beginPath(); ctx.moveTo(g.pa.x,g.pa.y); ctx.lineTo(g.pb.x,g.pb.y); ctx.stroke();
       }
       ctx.setLineDash([]);
-    }else if(round.twist!=="maru") for(const c of round.cubes){   // まんまるの立方体は完全に見せない
+    }else if(round.twist!=="maru" && round.mode!=="cylinder") for(const c of round.cubes){
       ctx.strokeStyle="rgba(120,100,120,.3)"; ctx.lineWidth=1.5; ctx.setLineDash([3,6]);
       for(const e of c.edges){
         if(e.inShown || e.visible) continue;
@@ -3384,7 +3492,7 @@ function drawScene(){
   }
 
   // れんしゅうモードでは、答え合わせと一緒に消失点とパース線を見せる
-  if(showAnswer && studyRun) drawVanishingAid();
+  if(showAnswer && studyRun && round.mode!=="cylinder") drawVanishingAid();
 
   if(!hideInk){
     // インクは ictx 側でズーム済みなので、ここは画面座標のまま等倍で貼る
@@ -3395,6 +3503,7 @@ function drawScene(){
     ctx.setTransform(dpr*viewS,0,0,dpr*viewS, dpr*viewX, dpr*viewY);
   }
 
+  if(round.mode==="cylinder") drawCylinderDirection();
   drawCameraPoint();
 
   // eraser radius indicator
@@ -4014,6 +4123,9 @@ const MODES={
   study:{name:tr("🎓 れんしゅう","🎓 Study"),
           hint:tr("じかんむせいげん。すきなだけどうぞ（きろくには のこりません）",
                   "No time limit, practise as long as you like (nothing is recorded)")},
+  cylinder:{name:tr("🥫 円柱","🥫 Cylinders"),
+    hint:tr("奥の楕円を一周と側面の接線2本。長さ＝直径。矢印は奥行きの向き。時間制限なし。",
+      "В отмеченном центре нарисуйте второй эллипс целиком и соедините основания двумя касательными. Длина = диаметр.")},
   endless:{name:tr("♾️ 無限モード","♾️ Endless"),
           hint:tr("時間はどんどんみじかくなる！合格ラインを下回ったら終わりだよ",
                   "Time keeps shrinking — drop below the pass line and it's over!")},
@@ -4046,6 +4158,7 @@ let state="menu", mode="normal", roundIdx=0, round=null, scores=[];
 let totalRounds=TOTAL_ROUNDS, practiceRounds=PRACTICE_ROUNDS, endlessRun=false;
 /* れんしゅうモード: 制限時間なし・記録対象外。判定すると消失点とパース線が見える */
 let studyRun=false;
+let cylinderVPCount=3;
 const CAMERA_POINT_KEY="cube-challenge-camera-point-v1";
 let showCameraPoint=(()=>{
   try{ const v=localStorage.getItem(CAMERA_POINT_KEY); return v===null?true:v==="1"; }
@@ -4074,6 +4187,9 @@ function setState(s){
 }
 
 function fixedCameraSpec(distanceM){
+  if(typeof mode!=="undefined" && mode==="cylinder") return tr(
+    `円柱：直径1m・長さ1m / 固定カメラ / b${BUILD_ID}`,
+    `${cylinderVPCount} VP · диаметр 1м · длина 1м · VP* — за экраном, уменьшите масштаб / b${BUILD_ID}`);
   const base=tr(
     `立方体は1辺${CUBE_EDGE_M.toFixed(2)}m（1m³）　CAM: FOV ${CAMERA_FOV_DEG.toFixed(1)}° / f=${CAMERA_FOCAL_NORM.toFixed(3)} / 主点中央 / ROLL 0°`,
     `Cube edges ${CUBE_EDGE_M.toFixed(2)}m (1m³)  CAM: FOV ${CAMERA_FOV_DEG.toFixed(1)}° / f=${CAMERA_FOCAL_NORM.toFixed(3)} / centred principal point / ROLL 0°`);
@@ -4344,8 +4460,10 @@ function startGame(m, opts){
   /* チャレンジ＝エンドレス・サバイバル。練習ラウンドは置かない
      （練習はタイマー自体が出ないので、ラダー先頭が「無制限の練習」に食われる） */
   endlessRun = (m==="endless");
-  studyRun   = (m==="study");
-  $("#btnCameraPoint").classList.toggle("hidden",!studyRun);
+  studyRun   = (m==="study" || m==="cylinder");
+  $("#btnCameraPoint").classList.toggle("hidden",!studyRun || m==="cylinder");
+  $("#btnCylinderVP").classList.toggle("hidden",m!=="cylinder");
+  $("#btnCylinderVP").textContent=`${cylinderVPCount} VP ⇄ ${cylinderVPCount===3?2:3} VP`;
   refreshCameraPointButton();
   // れんしゅうは終わりなし＝結果画面を出さない（やめるまで好きなだけ描ける）
   totalRounds  = (endlessRun||studyRun) ? Infinity : TOTAL_ROUNDS;
@@ -4438,7 +4556,7 @@ function roundNotes(res, auto, oneStroke, giveUp){
   const pushLoud=s=>{ if(!quiet) push(s); };
   /* れんしゅうのワンポイントは先に出す（あとから足すと上限3件で捨てられる）。
      ランをまたいで続きから出すので、10種すべてが順に一巡する */
-  if(studyRun){
+  if(studyRun && round.mode!=="cylinder"){
     const ti=(tipStart+roundIdx) % CUBE_TIPS.length;
     push(CUBE_TIPS[ti]);
     // 結果画面が無いモードなので、続きの位置はラウンドごとに保存しておく
@@ -5480,6 +5598,12 @@ $("#btnCameraPoint").addEventListener("click",e=>{
   showCameraPoint=!showCameraPoint;
   try{localStorage.setItem(CAMERA_POINT_KEY,showCameraPoint?"1":"0");}catch(_){}
   refreshCameraPointButton();render();e.currentTarget.blur();
+});
+$("#btnCylinderVP").addEventListener("click",e=>{
+  cylinderVPCount=cylinderVPCount===3?2:3;
+  e.currentTarget.textContent=`${cylinderVPCount} VP ⇄ ${cylinderVPCount===3?2:3} VP`;
+  e.currentTarget.blur();
+  if(mode==="cylinder"){roundIdx++;newRound();}
 });
 $("#btnNext").addEventListener("click",next);
 $("#btnUndo").addEventListener("click",()=>undo(false));   // 引数なしで渡すとEventが真になるので包む

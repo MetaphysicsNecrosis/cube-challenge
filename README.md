@@ -1,5 +1,25 @@
 # 🧊 立方体チャレンジ / Cube Challenge
 
+## Cylinders and camera C (this fork)
+
+Download `index.html` from this fork and open it in your browser. On the home
+screen, choose **🥫 Цилиндры / Cylinders**. There is no timer or leaderboard.
+One end ellipse is given: draw the complete far ellipse (including the hidden
+part) and the two tangent sides. The cylinder's length equals its diameter;
+the dashed axis ends at the marked centre of the second base. Switch between
+**2 VP / 3 VP** in the drawing toolbar (starts a new task). VP1 and VP2 describe
+the base plane; VP3 is the cylinder axis. In 2 VP, VP3 is at infinity and the
+sides are parallel. VPs are shown from the start; arrows at the viewport edge
+point towards off-screen VPs, not their actual locations. Zoom out to see them.
+Judge reveals the complete answer and tangent extensions.
+The original cube Study mode also retains the camera-point toggle.
+
+The Play links below belong to the original author and do not run this fork.
+For offline music and images, download the whole repository ZIP; the HTML
+alone works without those optional assets.
+
+Development check: `node tests/cylinders.cjs`.
+
 1つの面だけをヒントに、立方体の残りを予測して描くパース練習ゲームです。
 A perspective-drawing game: you see one face of a cube — draw the rest!
 
