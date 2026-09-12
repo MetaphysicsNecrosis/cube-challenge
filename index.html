@@ -676,7 +676,7 @@ const eraserR = () => ERASER_R/viewS;
 const GAME_VER = "1.27";   // 公開バージョン
 /* 同じ公開バージョン内の採点hotfixもスクリーンショットから識別できるようにする。
    sw.js のCACHE名にも同じBUILD_IDを含め、旧1.27キャッシュを確実に更新する。 */
-const BUILD_ID = "20260912.two-cubes.2";
+const BUILD_ID = "20260912.two-cubes.3";
 // ネイティブアプリ（Capacitor/App Store版）で動いているか
 const CAP = !!(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform());
 
@@ -3599,16 +3599,19 @@ function drawCylinderDirection(){
   ctx.fillStyle="#527e89";ctx.font=`${12*z}px sans-serif`;
   ctx.fillText("2-й эллипс: центр здесь",x+10*z,y+19*z);ctx.restore();
 }
+const STACK_FACE_COLORS=["rgba(66,177,151,.27)","rgba(66,177,151,.27)",
+  "rgba(86,148,211,.27)","rgba(86,148,211,.27)",
+  "rgba(235,174,65,.29)","rgba(235,174,65,.29)"];
+const STACK_PROJECTION_FACE_COLORS=["rgba(66,177,151,.42)","rgba(66,177,151,.42)",
+  "rgba(86,148,211,.42)","rgba(86,148,211,.42)",
+  "rgba(235,174,65,.45)","rgba(235,174,65,.45)"];
 function drawStackAnchor(c){
   ctx.save();
-  const faceColors=["rgba(66,177,151,.27)","rgba(66,177,151,.27)",
-    "rgba(86,148,211,.27)","rgba(86,148,211,.27)",
-    "rgba(235,174,65,.29)","rgba(235,174,65,.29)"];
   for(let fi=0;fi<CUBE_FACES.length;fi++){
     if(!c.vis[fi]) continue;
     const ix=CUBE_FACES[fi].idx;
     ctx.beginPath();ix.forEach((vi,i)=>i?ctx.lineTo(c.P[vi].x,c.P[vi].y):ctx.moveTo(c.P[vi].x,c.P[vi].y));
-    ctx.closePath();ctx.fillStyle=faceColors[fi];ctx.fill();
+    ctx.closePath();ctx.fillStyle=STACK_FACE_COLORS[fi];ctx.fill();
   }
   ctx.strokeStyle="#44515b";ctx.lineWidth=3;
   for(const e of c.edges){
@@ -3631,8 +3634,9 @@ function drawStackProjections(){
   const w=Math.max(240,cvp.clientWidth||dock.clientWidth-20),h=Math.max(100,cvp.clientHeight||142);
   cvp.width=Math.round(w*dpr);cvp.height=Math.round(h*dpr);
   const g=cvp.getContext("2d");g.setTransform(dpr,0,0,dpr,0,0);g.clearRect(0,0,w,h);
-  const views=[{name:"СВЕРХУ",u:0,v:2,axes:"X →  ·  Z ↑"},
-    {name:"СПЕРЕДИ",u:0,v:1,axes:"X →  ·  Y ↑"},{name:"СБОКУ",u:2,v:1,axes:"Z →  ·  Y ↑"}];
+  const views=[{name:"СВЕРХУ",u:0,v:2,face:5,axes:"X →  ·  Z ↑"},
+    {name:"СПЕРЕДИ",u:0,v:1,face:1,axes:"X →  ·  Y ↑"},
+    {name:"СБОКУ",u:2,v:1,face:3,axes:"Z →  ·  Y ↑"}];
   const gap=6,cellW=(w-gap*2)/3,top=16,bottom=h-14;
   const hull=pts=>{
     const q=pts.slice().sort((a,b)=>a.x-b.x||a.y-b.y),cross=(o,a,b)=>(a.x-o.x)*(b.y-o.y)-(a.y-o.y)*(b.x-o.x);
@@ -3656,7 +3660,9 @@ function drawStackProjections(){
       const hp=hull(pts);g.beginPath();hp.forEach((p,j)=>j?g.lineTo(p.x,p.y):g.moveTo(p.x,p.y));g.closePath();g.fillStyle=fill;g.fill();
       g.strokeStyle=stroke;g.lineWidth=width;g.setLineDash([]);
     };
-    body(A,"rgba(75,135,183,.23)","#496d87",1.4);
+    // A keeps the same axis colours as the perspective cube: top is gold,
+    // front is teal and side is blue. This is the visual key between views.
+    body(A,STACK_PROJECTION_FACE_COLORS[view.face],"#496d87",1.4);
     for(const e of CUBE_EDGES){g.beginPath();g.moveTo(A[e.a].x,A[e.a].y);g.lineTo(A[e.b].x,A[e.b].y);g.stroke();}
     body(B,"rgba(224,87,132,.18)","#d24f7b",2);
     for(const e of CUBE_EDGES){g.beginPath();g.moveTo(B[e.a].x,B[e.a].y);g.lineTo(B[e.b].x,B[e.b].y);g.stroke();}

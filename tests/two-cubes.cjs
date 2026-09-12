@@ -8,7 +8,7 @@ new vm.Script(script);
 const context = vm.createContext({assert,console});
 const helpers=script.slice(script.indexOf('function hashSeed('),script.indexOf('const randomSeed'));
 const core=script.slice(script.indexOf('const CUBE_V ='),script.indexOf('const gradeOf ='));
-const drawing=script.slice(script.indexOf('function drawStackAnchor('),script.indexOf('function drawCameraPoint('));
+const drawing=script.slice(script.indexOf('const STACK_FACE_COLORS='),script.indexOf('function drawCameraPoint('));
 vm.runInContext(`
 const clamp=(v,a,b)=>Math.max(a,Math.min(b,v)),DEG=Math.PI/180,TIME_LIMIT=30,tr=(a,b)=>b;
 let roundIdx=0,gameSeed='test',gameTwist=null,endlessRun=false,cylinderVPCount=3;
@@ -68,6 +68,9 @@ const elements={
 };
 const $=id=>elements[id];
 drawStackAnchor(round.cubes[0]);drawStackProjections();
+assert.ok(STACK_PROJECTION_FACE_COLORS[5].includes('235,174,65'),'Top projection uses gold face');
+assert.ok(STACK_PROJECTION_FACE_COLORS[1].includes('66,177,151'),'Front projection uses teal face');
+assert.ok(STACK_PROJECTION_FACE_COLORS[3].includes('86,148,211'),'Side projection uses blue face');
 assert.ok(xrayCount>0&&xrayCount<300,'Need both visible and XRAY tasks');
 assert.ok(rotatedCount>150,'Most tasks should rotate B');
 assert.ok(extremeSizeCount>50,'Large size differences should occur');
