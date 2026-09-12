@@ -34,7 +34,9 @@ When B would be mostly hidden, the task explicitly switches to **XRAY /
 ПРОЕКЦИЯ** and asks for all 12 edges, including occluded ones. Other rounds ask
 only for physically visible parts. The generator rejects tasks where B is too
 small on screen or the construction leaves the drawable frame. This mode has
-no timer or leaderboard.
+no timer or leaderboard. The **Сетка** toggle adds a true X/Z perspective grid
+through the cubes' contact plane; its two line families converge to A's
+horizontal vanishing points and use the same axis colours as the cube faces.
 
 Development check: `node tests/two-cubes.cjs`.
 

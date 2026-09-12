@@ -54,10 +54,12 @@ for(let seed=1;seed<=300;seed++){
     assert.ok(Math.abs(s1-s2)<=.05,'seed '+seed+': scale '+s1+'/'+s2);
   }
 }
-let round=make(5,1280,900),viewS=1,W=1280,H=900,dpr=1;
+let round=make(5,1280,900),viewS=1,W=1280,H=900,dpr=1,showPerspectiveGrid=true;
 const finite=(...v)=>assert.ok(v.every(Number.isFinite)),noop=()=>{};
-const ctx={save:noop,restore:noop,beginPath:noop,closePath:noop,fill:noop,stroke:noop,
- moveTo:finite,lineTo:finite,fillRect:finite,strokeRect:finite,roundRect:finite,setTransform:finite,
+let path=[],gridSegments=[];
+const ctx={save:noop,restore:noop,beginPath:()=>{path=[]},closePath:noop,fill:noop,
+ stroke:()=>{if(path.length===2)gridSegments.push({points:path.slice(),color:ctx.strokeStyle})},
+ moveTo:(x,y)=>{finite(x,y);path=[{x,y}]},lineTo:(x,y)=>{finite(x,y);path.push({x,y})},fillRect:finite,strokeRect:finite,roundRect:finite,setTransform:finite,
  setLineDash:a=>finite(...a),fillText:(s,x,y)=>finite(x,y)};
 const pg={...ctx,clearRect:finite,rect:finite,clip:noop,arc:finite};
 const classList={add:noop,remove:noop,toggle:noop};
@@ -67,6 +69,14 @@ const elements={
  '#stackProjectionCanvas':{clientWidth:460,clientHeight:142,getContext:()=>pg}
 };
 const $=id=>elements[id];
+drawStackPerspectiveGrid();
+assert.ok(gridSegments.length>=20,'Perspective grid must render both VP families');
+const collinear=(seg,vp)=>Math.abs((seg[1].x-seg[0].x)*(vp.y-seg[0].y)-(seg[1].y-seg[0].y)*(vp.x-seg[0].x))/(Math.hypot(seg[1].x-seg[0].x,seg[1].y-seg[0].y)*Math.max(1,Math.hypot(vp.x-seg[0].x,vp.y-seg[0].y)));
+for(const line of gridSegments){
+  const vp=line.color.includes('66,177,151')?round.cubes[0].exactVps[2]:round.cubes[0].exactVps[0];
+  assert.ok(collinear(line.points,vp)<1e-10,'Grid line misses its VP');
+}
+gridSegments=[];
 drawStackAnchor(round.cubes[0]);drawStackProjections();
 assert.ok(STACK_PROJECTION_FACE_COLORS[5].includes('235,174,65'),'Top projection uses gold face');
 assert.ok(STACK_PROJECTION_FACE_COLORS[1].includes('66,177,151'),'Front projection uses teal face');

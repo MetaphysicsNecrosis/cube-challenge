@@ -119,10 +119,11 @@
   button.tool{border:none;box-shadow:none;padding:8px 14px;background:transparent;}
   button.tool.active{background:var(--lav);box-shadow:inset 0 1px 3px rgba(120,90,160,.18);}
   #btnCameraPoint.active{background:#e8f7ff;border-color:#67bfe8;color:#356f91;}
+  #btnPerspectiveGrid.active{background:#edf8f5;border-color:#67bba9;color:#377c70;}
   button.ghost{background:rgba(255,255,255,.7);box-shadow:none;border-color:transparent;color:#9a8090;}
   button.small{padding:5px 12px;font-size:13px;pointer-events:auto;}
   #stackProjectionDock{
-    position:fixed;right:198px;bottom:14px;z-index:8;pointer-events:none;
+    position:fixed;right:14px;bottom:82px;z-index:8;pointer-events:none;
     width:min(480px,calc(100vw - 225px));box-sizing:border-box;
     padding:9px 10px 8px;background:rgba(255,255,255,.96);
     border:2px solid #e1c28e;border-radius:13px;
@@ -505,6 +506,7 @@
     <button id="btnUndo" title="ひとつ戻す (Ctrl+Z)">↩️ もどす</button>
     <button id="btnClear" title="ぜんぶ消す">🗑️ ぜんぶけす</button>
     <button id="btnCameraPoint" class="hidden" title="正確なカメラ主点 C を表示／非表示">📷 C: ON</button>
+    <button id="btnPerspectiveGrid" class="hidden" title="Перспективная сетка на плоскости контакта кубов">▦ Сетка: OFF</button>
     <button id="btnCylinderVP" class="hidden" title="Переключить перспективу цилиндра и начать новое задание">3 VP ⇄ 2 VP</button>
     <button id="btnSubmit" class="primary" title="判定！ (Enter)">✨ はんてい！</button>
   </div>
@@ -676,7 +678,7 @@ const eraserR = () => ERASER_R/viewS;
 const GAME_VER = "1.27";   // 公開バージョン
 /* 同じ公開バージョン内の採点hotfixもスクリーンショットから識別できるようにする。
    sw.js のCACHE名にも同じBUILD_IDを含め、旧1.27キャッシュを確実に更新する。 */
-const BUILD_ID = "20260912.two-cubes.3";
+const BUILD_ID = "20260912.two-cubes.4";
 // ネイティブアプリ（Capacitor/App Store版）で動いているか
 const CAP = !!(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform());
 
@@ -3605,6 +3607,39 @@ const STACK_FACE_COLORS=["rgba(66,177,151,.27)","rgba(66,177,151,.27)",
 const STACK_PROJECTION_FACE_COLORS=["rgba(66,177,151,.42)","rgba(66,177,151,.42)",
   "rgba(86,148,211,.42)","rgba(86,148,211,.42)",
   "rgba(235,174,65,.45)","rgba(235,174,65,.45)"];
+function drawStackPerspectiveGrid(){
+  if(!showPerspectiveGrid||!round||round.mode!=="stack") return;
+  const c=round.cubes[0],R=rotMat(c.rot.yaw,c.rot.pitch),screen=round.scoreLayout;
+  const planeY=round.stackPlacement==="above"?1:-1,extent=6,z=1/viewS;
+  const project=w=>{
+    const q=mv(R,w),depth=q[2]+c.D;
+    if(depth<.249999)return null;
+    return {x:screen.cx+(q[0]+c.tx)/depth*CAMERA_FOCAL*screen.k,
+            y:screen.cy-(q[1]+c.ty)/depth*CAMERA_FOCAL*screen.k};
+  };
+  const segment=(a,b,color,width,dash=[])=>{
+    const qa=mv(R,a),qb=mv(R,b),za=qa[2]+c.D,zb=qb[2]+c.D;
+    if(za<=.25&&zb<=.25)return;
+    if(za<=.25||zb<=.25){
+      const t=(.25-za)/(zb-za),cut=a.map((v,i)=>v+(b[i]-v)*t);
+      if(za<=.25)a=cut;else b=cut;
+    }
+    const pa=project(a),pb=project(b);if(!pa||!pb)return;
+    ctx.strokeStyle=color;ctx.lineWidth=width*z;ctx.setLineDash(dash.map(v=>v*z));
+    ctx.beginPath();ctx.moveTo(pa.x,pa.y);ctx.lineTo(pb.x,pb.y);ctx.stroke();
+  };
+  ctx.save();
+  // One world unit is half of A's side. Even-numbered lines therefore mark
+  // whole-cube steps; X and Z families keep the face-axis colour coding.
+  for(let n=-extent;n<=extent;n++){
+    const major=n%2===0,axis=n===0;
+    segment([n,planeY,-extent],[n,planeY,extent],
+      axis?"rgba(66,177,151,.72)":major?"rgba(66,177,151,.36)":"rgba(66,177,151,.19)",axis?1.8:major?1.15:.8,axis?[]:[3,5]);
+    segment([-extent,planeY,n],[extent,planeY,n],
+      axis?"rgba(86,148,211,.72)":major?"rgba(86,148,211,.36)":"rgba(86,148,211,.19)",axis?1.8:major?1.15:.8,axis?[]:[3,5]);
+  }
+  ctx.setLineDash([]);ctx.restore();
+}
 function drawStackAnchor(c){
   ctx.save();
   for(let fi=0;fi<CUBE_FACES.length;fi++){
@@ -3703,7 +3738,10 @@ function drawScene(){
   if(round.mode==="cylinder") drawCylinderAid();
 
   const showAnswer = (state==="roundResult");
-  if(round.mode==="stack") drawStackAnchor(round.cubes[0]);
+  if(round.mode==="stack"){
+    drawStackPerspectiveGrid();
+    drawStackAnchor(round.cubes[0]);
+  }
 
   if(showAnswer){
     if(round.crossHidden){
@@ -4448,6 +4486,11 @@ let showCameraPoint=(()=>{
   try{ const v=localStorage.getItem(CAMERA_POINT_KEY); return v===null?true:v==="1"; }
   catch(_){ return true; }
 })();
+const PERSPECTIVE_GRID_KEY="cube-challenge-perspective-grid-v1";
+let showPerspectiveGrid=(()=>{
+  try{ return localStorage.getItem(PERSPECTIVE_GRID_KEY)==="1"; }
+  catch(_){ return false; }
+})();
 let endDead=false, endDeadReason="";   // ランを終わらせたか／死因（"time"|"score"）
 let roundsInfo=[];   // {shot,baseShot,shotScale,strokes,score,practice,timedOut} per round
 let lastFinal=null;  // {avg,g,isBest,ttl}
@@ -4753,10 +4796,12 @@ function startGame(m, opts){
   endlessRun = (m==="endless");
   studyRun   = (m==="study" || m==="cylinder" || m==="stack");
   $("#btnCameraPoint").classList.toggle("hidden",!studyRun || m==="cylinder");
+  $("#btnPerspectiveGrid").classList.toggle("hidden",m!=="stack");
   $("#btnCylinderVP").classList.toggle("hidden",m!=="cylinder");
   $("#stackProjectionDock").classList.toggle("hidden",m!=="stack");
   $("#btnCylinderVP").textContent=`${cylinderVPCount} VP ⇄ ${cylinderVPCount===3?2:3} VP`;
   refreshCameraPointButton();
+  refreshPerspectiveGridButton();
   // れんしゅうは終わりなし＝結果画面を出さない（やめるまで好きなだけ描ける）
   totalRounds  = (endlessRun||studyRun) ? Infinity : TOTAL_ROUNDS;
   // れんしゅうは全ラウンドが本物のお題（ガイドなぞりの練習ラウンドは置かない）
@@ -5891,6 +5936,17 @@ $("#btnCameraPoint").addEventListener("click",e=>{
   showCameraPoint=!showCameraPoint;
   try{localStorage.setItem(CAMERA_POINT_KEY,showCameraPoint?"1":"0");}catch(_){}
   refreshCameraPointButton();render();e.currentTarget.blur();
+});
+function refreshPerspectiveGridButton(){
+  const b=$("#btnPerspectiveGrid");
+  b.textContent=showPerspectiveGrid?"▦ Сетка: ON":"▦ Сетка: OFF";
+  b.classList.toggle("active",showPerspectiveGrid);
+  b.title="Перспективная сетка X/Z на плоскости контакта кубов";
+}
+$("#btnPerspectiveGrid").addEventListener("click",e=>{
+  showPerspectiveGrid=!showPerspectiveGrid;
+  try{localStorage.setItem(PERSPECTIVE_GRID_KEY,showPerspectiveGrid?"1":"0");}catch(_){}
+  refreshPerspectiveGridButton();render();e.currentTarget.blur();
 });
 $("#btnCylinderVP").addEventListener("click",e=>{
   cylinderVPCount=cylinderVPCount===3?2:3;
