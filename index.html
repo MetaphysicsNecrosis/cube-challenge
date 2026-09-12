@@ -121,6 +121,23 @@
   #btnCameraPoint.active{background:#e8f7ff;border-color:#67bfe8;color:#356f91;}
   button.ghost{background:rgba(255,255,255,.7);box-shadow:none;border-color:transparent;color:#9a8090;}
   button.small{padding:5px 12px;font-size:13px;pointer-events:auto;}
+  #stackProjectionDock{
+    position:fixed;right:198px;bottom:14px;z-index:8;pointer-events:none;
+    width:min(480px,calc(100vw - 225px));box-sizing:border-box;
+    padding:9px 10px 8px;background:rgba(255,255,255,.96);
+    border:2px solid #e1c28e;border-radius:13px;
+    box-shadow:0 5px 18px rgba(70,55,65,.16);
+  }
+  #stackProjectionTitle{font-size:11.5px;line-height:1.35;font-weight:800;color:#604e5b;margin-bottom:4px;}
+  #stackProjectionTitle.xray{color:#b44969;}
+  #stackProjectionCanvas{display:block;width:100%;height:142px;}
+  @media (orientation:portrait){
+    #stackProjectionDock{right:8px;bottom:170px;width:min(480px,calc(100vw - 16px));}
+  }
+  @media (max-height:620px) and (orientation:portrait){
+    #stackProjectionDock{bottom:142px;padding:6px 8px;}
+    #stackProjectionCanvas{height:112px;}
+  }
 
   /* 判定ボタン誘導矢印 */
   #judgeHint{
@@ -493,6 +510,11 @@
   </div>
 </div>
 
+<div id="stackProjectionDock" class="hidden">
+  <div id="stackProjectionTitle"></div>
+  <canvas id="stackProjectionCanvas"></canvas>
+</div>
+
 <div id="audioDock">
   <button id="btnSfx" title="効果音 オン/オフ">🔔</button>
   <button id="btnBgm" title="BGM オン/オフ">🎵</button>
@@ -522,7 +544,7 @@
       <span><span class="mn">🎮 モードをえらぶ</span></span>
     </button>
     <button class="modeBtn" data-mode="stack" style="background:#fff3df;border-color:#e5bc78;">
-      <span><span class="mn">🧊↕🧊 Два куба</span><br><span class="md">Один куб + проекции сверху, спереди и сбоку</span></span>
+      <span><span class="mn">🧊↕🧊 Два куба</span><br><span class="md">Размер и поворот B · отдельное окно проекций · иногда XRAY</span></span>
     </button>
     <button class="modeBtn" data-mode="cylinder" style="background:#e9faf5;border-color:#a3d9c8;">
       <span><span class="mn">🥫 Цилиндры / Cylinders</span><br><span class="md">2 VP / 3 VP · точки схода · без таймера</span></span>
@@ -553,7 +575,7 @@
       <span class="best" id="bestStudy"></span>
     </button>
     <button class="modeBtn" data-mode="stack" style="background:#fff3df;border-color:#e5bc78;">
-      <span><span class="mn">🧊↕🧊 Два куба</span><br><span class="md">Один куб + проекции сверху, спереди и сбоку</span></span>
+      <span><span class="mn">🧊↕🧊 Два куба</span><br><span class="md">Размер и поворот B · отдельное окно проекций · иногда XRAY</span></span>
     </button>
     <button class="modeBtn" data-mode="cylinder" style="background:#e9faf5;border-color:#a3d9c8;">
       <span><span class="mn">🥫 Цилиндры / Cylinders</span><br><span class="md">2 VP / 3 VP · точки схода · без таймера</span></span>
@@ -654,7 +676,7 @@ const eraserR = () => ERASER_R/viewS;
 const GAME_VER = "1.27";   // 公開バージョン
 /* 同じ公開バージョン内の採点hotfixもスクリーンショットから識別できるようにする。
    sw.js のCACHE名にも同じBUILD_IDを含め、旧1.27キャッシュを確実に更新する。 */
-const BUILD_ID = "20260912.two-cubes.1";
+const BUILD_ID = "20260912.two-cubes.2";
 // ネイティブアプリ（Capacitor/App Store版）で動いているか
 const CAP = !!(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform());
 
@@ -1272,6 +1294,27 @@ function shapeOf(rot, D, tx, ty, extra){
   }));
   return { Q, vis, shown, edges, rot, D, tx, ty };
 }
+function scaledCubeShape(rot,D,tx,ty,scale){
+  const R=rotMat(rot.yaw,rot.pitch);
+  const Q=CUBE_V.map(v=>{
+    const q=mv(R,v.map(x=>x*scale)),Z=q[2]+D;
+    return {x:(q[0]+tx)/Z,y:-(q[1]+ty)/Z};
+  });
+  const vis=CUBE_FACES.map(f=>{
+    const n=mv(R,f.n),cc=[n[0]*scale+tx,n[1]*scale+ty,n[2]*scale+D];
+    return n[0]*cc[0]+n[1]*cc[1]+n[2]*cc[2]<0;
+  });
+  let shown=-1,best=-2;
+  CUBE_FACES.forEach((f,i)=>{
+    if(!vis[i])return;
+    const n=mv(R,f.n),cc=[n[0]*scale+tx,n[1]*scale+ty,n[2]*scale+D];
+    const score=-(n[0]*cc[0]+n[1]*cc[1]+n[2]*cc[2])/Math.hypot(...cc);
+    if(score>best){best=score;shown=i;}
+  });
+  const edges=CUBE_EDGES.map(e=>({a:e.a,b:e.b,inShown:e.faces.includes(shown),
+    visible:vis[e.faces[0]]||vis[e.faces[1]]}));
+  return {Q,vis,shown,edges,rot,D,tx,ty,scale};
+}
 
 /* 全ラウンド共通の仮想カメラ。
    1000×1000の正方形ステージ、中央が主点、焦点距離780、ロールなしで固定する。
@@ -1515,29 +1558,63 @@ function buildCylinderRound(W,H){
 /* Two cubes share one local coordinate system. A is the only perspective
    reference shown; three orthographic diagrams specify B's translation. */
 function buildStackRound(W,H,attempt=0){
-  const rot={yaw:rndSign()*rnd(30,48)*DEG,pitch:rndSign()*rnd(27,42)*DEG};
-  const sx=rndSign(),sy=rndSign(),sz=rndSign();
-  const relation=[sx*(rng()<.5?.5:1),sy*2,sz*(rng()<.5?.5:1)];
-  const anchorOffset=relation.map(v=>-v/2),targetOffset=relation.map(v=>v/2);
-  const R=rotMat(rot.yaw,rot.pitch), D=10;
-  const at=offset=>{
-    const q=mv(R,offset);
-    return shapeOf(rot,D+q[2],q[0],q[1],TWIST_EXTRA3D);
+  const rotA={yaw:rndSign()*rnd(30,48)*DEG,pitch:rndSign()*rnd(27,42)*DEG};
+  const turnPool=[0,15,30,45],turnAbs=turnPool[Math.floor(rng()*turnPool.length)];
+  const turnDeg=turnAbs*(turnAbs?rndSign():1),turn=turnDeg*DEG;
+  const scalePool=[.5,.65,1,1.5,2],targetScale=scalePool[Math.floor(rng()*scalePool.length)];
+  const lateral=()=>rng()<.28?0:rndSign()*(rng()<.5?.5:1)*Math.min(1,targetScale);
+  const relation=[lateral(),rndSign()*(1+targetScale),lateral()];
+  const rotB={yaw:rotA.yaw+turn,pitch:rotA.pitch};
+  const RA=rotMat(rotA.yaw,rotA.pitch),RB=rotMat(rotB.yaw,rotB.pitch);
+  const turnY=v=>{
+    const c=Math.cos(turn),s=Math.sin(turn);
+    return [c*v[0]+s*v[2],v[1],-s*v[0]+c*v[2]];
   };
-  const cubes=layoutCubes([at(anchorOffset),at(targetOffset)],W,H);
-  const anchor=cubes[0],target=cubes[1],targets=[],allSegs=[];
+  const anchorWorld=CUBE_V.map(v=>v.slice());
+  const targetWorld=CUBE_V.map(v=>{
+    const q=turnY(v.map(x=>x*targetScale));
+    return q.map((x,i)=>x+relation[i]);
+  });
+  const cameraPoints=anchorWorld.concat(targetWorld).map(w=>mv(RA,w));
+  const xs0=cameraPoints.map(q=>q[0]),ys0=cameraPoints.map(q=>q[1]),zs0=cameraPoints.map(q=>q[2]);
+  let tx=-(Math.min(...xs0)+Math.max(...xs0))/2;
+  let ty=-(Math.min(...ys0)+Math.max(...ys0))/2;
+  const projectedSpan=D=>{
+    const xs=[],ys=[];
+    for(const q of cameraPoints){
+      const z=q[2]+D;xs.push((q[0]+tx)/z*CAMERA_FOCAL);ys.push(-(q[1]+ty)/z*CAMERA_FOCAL);
+    }
+    return Math.max(Math.max(...xs)-Math.min(...xs),Math.max(...ys)-Math.min(...ys));
+  };
+  let lo=Math.max(3,-Math.min(...zs0)+1),hi=32;
+  for(let i=0;i<30;i++){const mid=(lo+hi)/2;if(projectedSpan(mid)>560)lo=mid;else hi=mid;}
+  const D=hi;
+  // Refine optical centring after perspective division.
+  for(let k=0;k<3;k++){
+    const xs=[],ys=[];let meanZ=0;
+    for(const q of cameraPoints){const z=q[2]+D;meanZ+=z;
+      xs.push((q[0]+tx)/z*CAMERA_FOCAL);ys.push(-(q[1]+ty)/z*CAMERA_FOCAL);}
+    meanZ/=cameraPoints.length;
+    tx-=(Math.min(...xs)+Math.max(...xs))/2/CAMERA_FOCAL*meanZ;
+    ty+=(Math.min(...ys)+Math.max(...ys))/2/CAMERA_FOCAL*meanZ;
+  }
+  const centerB=mv(RA,relation);
+  const shapes=[scaledCubeShape(rotA,D,tx,ty,1),
+    scaledCubeShape(rotB,D+centerB[2],tx+centerB[0],ty+centerB[1],targetScale)];
+  const cubes=layoutCubes(shapes,W,H);
+  const anchor=cubes[0],target=cubes[1],allSegs=[],visibleTargets=[],edgeInfo=[];
   const screen=cameraScreenLayout(W,H);
-  const eye=[-R[2][0]*D,-R[2][1]*D,-R[2][2]*D];
-  const worldPoint=(a,b,t)=>a.map((v,i)=>targetOffset[i]+v+(b[i]-v)*t);
+  const eye=[0,1,2].map(i=>-(RA[0][i]*tx+RA[1][i]*ty+RA[2][i]*D));
+  const worldPoint=(a,b,t)=>a.map((v,i)=>v+(b[i]-v)*t);
   const project=w=>{
-    const q=mv(R,w),z=q[2]+D;
-    return {x:screen.cx+q[0]/z*CAMERA_FOCAL*screen.k,
-            y:screen.cy-q[1]/z*CAMERA_FOCAL*screen.k};
+    const q=mv(RA,w),z=q[2]+D;
+    return {x:screen.cx+(q[0]+tx)/z*CAMERA_FOCAL*screen.k,
+            y:screen.cy-(q[1]+ty)/z*CAMERA_FOCAL*screen.k};
   };
   const occluded=w=>{
     let lo=0,hi=1;
     for(let i=0;i<3;i++){
-      const d=w[i]-eye[i],mn=anchorOffset[i]-1,mx=anchorOffset[i]+1;
+      const d=w[i]-eye[i],mn=-1,mx=1;
       if(Math.abs(d)<1e-12){if(eye[i]<mn||eye[i]>mx)return false;continue;}
       let a=(mn-eye[i])/d,b=(mx-eye[i])/d;if(a>b){const x=a;a=b;b=x;}
       lo=Math.max(lo,a);hi=Math.min(hi,b);if(lo>hi)return false;
@@ -1551,11 +1628,13 @@ function buildStackRound(W,H,attempt=0){
   };
   // The reference cube's construction lines are always free ink.
   for(const e of anchor.edges) addSeg(anchor.P[e.a],anchor.P[e.b],anchor,1);
+  let ownVisibleLen=0,actuallyVisibleLen=0;
   for(const e of target.edges){
     const pa=target.P[e.a],pb=target.P[e.b];
     addSeg(pa,pb,target,1);
-    if(!e.visible) continue;
-    const va=CUBE_V[e.a],vb=CUBE_V[e.b],visible=t=>!occluded(worldPoint(va,vb,t));
+    const va=targetWorld[e.a],vb=targetWorld[e.b],visible=t=>e.visible&&!occluded(worldPoint(va,vb,t));
+    const fullLen=Math.hypot(pb.x-pa.x,pb.y-pa.y);
+    if(e.visible)ownVisibleLen+=fullLen;
     const runs=[];let prev=visible(0),start=prev?0:null,lastT=0;
     for(let i=1;i<=48;i++){
       const t=i/48,cur=visible(t);
@@ -1568,21 +1647,38 @@ function buildStackRound(W,H,attempt=0){
       prev=cur;lastT=t;
     }
     if(prev)runs.push([start,1]);
+    let edgeVisibleLen=0;
     for(const [u,v] of runs){
       if(v-u<1e-4)continue;
       const p0=project(worldPoint(va,vb,u)),p1=project(worldPoint(va,vb,v));
       const len=Math.hypot(p1.x-p0.x,p1.y-p0.y),n=clamp(Math.round(len/8),8,40),samples=[];
+      edgeVisibleLen+=len;
       for(let i=0;i<=n;i++)samples.push({x:p0.x+(p1.x-p0.x)*i/n,y:p0.y+(p1.y-p0.y)*i/n});
-      targets.push({cube:1,pa:p0,pb:p1,samples,tol:target.tol,scoreTol:target.scoreTol,
+      visibleTargets.push({cube:1,pa:p0,pb:p1,samples,tol:target.tol,scoreTol:target.scoreTol,
         score:0,hidden:false});
     }
+    actuallyVisibleLen+=edgeVisibleLen;
+    edgeInfo.push({e,pa,pb,fraction:fullLen?edgeVisibleLen/fullLen:0});
   }
-  if((targets.length<6||!cubes.every(c=>c.frameOk))&&attempt<24)
+  const visibleRatio=ownVisibleLen?actuallyVisibleLen/ownVisibleLen:0;
+  const xray=visibleRatio<.48||visibleTargets.length<6;
+  let targets=visibleTargets;
+  if(xray) targets=edgeInfo.map(({e,pa,pb,fraction})=>{
+    const len=Math.hypot(pb.x-pa.x,pb.y-pa.y),n=clamp(Math.round(len/8),8,40),samples=[];
+    for(let i=0;i<=n;i++)samples.push({x:pa.x+(pb.x-pa.x)*i/n,y:pa.y+(pb.y-pa.y)*i/n});
+    return {cube:1,pa,pb,samples,tol:target.tol,scoreTol:target.scoreTol,score:0,
+      hidden:!e.visible||fraction<.98};
+  });
+  const txs=target.P.slice(0,8).map(p=>p.x),tys=target.P.slice(0,8).map(p=>p.y);
+  const targetSpan=Math.max(Math.max(...txs)-Math.min(...txs),Math.max(...tys)-Math.min(...tys))/screen.k;
+  if((targetSpan<85||(!xray&&targets.length<6)||!cubes.every(c=>c.frameOk))&&attempt<36)
     return buildStackRound(W,H,attempt+1);
-  return {mode:"stack",practice:false,cubes,targets,allSegs,shared:true,result:null,
+  return {mode:"stack",practice:false,cubes,targets,allSegs,shared:turnDeg===0,result:null,
     twist:null,hintLines:null,extraLen:0,crossHidden:null,scoreLayout:screen,
     timeLimit:TIME_LIMIT,noCube:true,twistOk:true,stackRelation:relation,
-    stackPlacement:sy>0?"above":"below"};
+    stackPlacement:relation[1]>0?"above":"below",stackScale:targetScale,
+    stackTurnDeg:turnDeg,stackXray:xray,stackVisibleRatio:visibleRatio,
+    stackAnchorWorld:anchorWorld,stackTargetWorld:targetWorld};
 }
 
 function genRound(mode, practice, W, H){
@@ -3371,8 +3467,37 @@ function rayEndInView(from,toward,box){
 /* れんしゅうモードの答え合わせで、消失点とそこへ集まるパース線を見せる。
    消失点は画面外へ出ることが多いので、画面内なら丸印、画面外なら
    「この方向にあるよ」という印を画面のふちに置く。 */
+function drawStackVanishingAid(){
+  const box=viewWorldBox(),z=1/viewS,A=round.cubes[0],B=round.cubes[1];
+  const centre=c=>c.P.slice(0,8).reduce((s,p)=>({x:s.x+p.x/8,y:s.y+p.y/8}),{x:0,y:0});
+  const entries=[],add=(vp,label,color,origin)=>{
+    const same=entries.find(e=>Math.hypot(e.vp.x-vp.x,e.vp.y-vp.y)<1e-6);
+    if(same){same.label=label.includes("Y")?"A/B · VP-Y":same.label.replace(/^A/,"A/B");same.color="#8165a8";}
+    else entries.push({vp,label,color,origin});
+  };
+  const labels=["VP-X","VP-Y","VP-Z"];
+  A.exactVps.forEach((vp,i)=>vp&&add(vp,`A · ${labels[i]}`,"#3f7fa8",centre(A)));
+  B.exactVps.forEach((vp,i)=>vp&&add(vp,`B · ${labels[i]}`,"#cf527d",centre(B)));
+  ctx.save();ctx.setLineDash([5*z,7*z]);ctx.lineWidth=1.15*z;
+  const horizon=clippedLine(A.exactVps[0],A.exactVps[2],box);
+  if(horizon){ctx.strokeStyle="rgba(70,153,139,.50)";ctx.beginPath();ctx.moveTo(horizon[0].x,horizon[0].y);ctx.lineTo(horizon[1].x,horizon[1].y);ctx.stroke();}
+  for(const e of entries){
+    const ray=rayEndInView(e.origin,e.vp,box);if(!ray)continue;
+    ctx.strokeStyle=e.color+"88";ctx.beginPath();ctx.moveTo(e.origin.x,e.origin.y);ctx.lineTo(ray.x,ray.y);ctx.stroke();
+  }
+  const m=38*z,inner={l:box.l+m,r:box.r-m,t:box.t+m,b:box.b-m},screenCentre={x:(box.l+box.r)/2,y:(box.t+box.b)/2};
+  ctx.setLineDash([]);ctx.font=`bold ${10*z}px sans-serif`;ctx.textAlign="center";
+  entries.forEach((e,i)=>{
+    const inside=e.vp.x>=inner.l&&e.vp.x<=inner.r&&e.vp.y>=inner.t&&e.vp.y<=inner.b;
+    const p=inside?e.vp:rayEndInView(screenCentre,e.vp,inner);if(!p)return;
+    ctx.fillStyle=e.color;ctx.beginPath();ctx.arc(p.x,p.y,4*z,0,Math.PI*2);ctx.fill();
+    ctx.fillText(e.label,p.x,p.y-(9+i%2*11)*z);
+  });
+  ctx.restore();
+}
 function drawVanishingAid(){
   if(round.mode==="cylinder"){ drawCylinderAid(); return; }
+  if(round.mode==="stack"){ drawStackVanishingAid(); return; }
   const c=round.cubes[0];
   const vps=vanishingPoints(c);
   const z=1/viewS, box=viewWorldBox();
@@ -3476,11 +3601,14 @@ function drawCylinderDirection(){
 }
 function drawStackAnchor(c){
   ctx.save();
+  const faceColors=["rgba(66,177,151,.27)","rgba(66,177,151,.27)",
+    "rgba(86,148,211,.27)","rgba(86,148,211,.27)",
+    "rgba(235,174,65,.29)","rgba(235,174,65,.29)"];
   for(let fi=0;fi<CUBE_FACES.length;fi++){
     if(!c.vis[fi]) continue;
     const ix=CUBE_FACES[fi].idx;
     ctx.beginPath();ix.forEach((vi,i)=>i?ctx.lineTo(c.P[vi].x,c.P[vi].y):ctx.moveTo(c.P[vi].x,c.P[vi].y));
-    ctx.closePath();ctx.fillStyle="rgba(91,116,139,.10)";ctx.fill();
+    ctx.closePath();ctx.fillStyle=faceColors[fi];ctx.fill();
   }
   ctx.strokeStyle="#44515b";ctx.lineWidth=3;
   for(const e of c.edges){
@@ -3492,31 +3620,52 @@ function drawStackAnchor(c){
   ctx.fillText("A · дан",cx,cy);ctx.restore();
 }
 function drawStackProjections(){
-  const rel=round.stackRelation;if(!rel)return;
-  const size=Math.min(78,Math.max(62,(W-32)/3)),gap=5,pad=7;
-  const total=3*size+2*gap,x0=Math.max(8,(W-total)/2),y0=82;
-  const views=[{name:"TOP X/Z",u:0,v:2},{name:"FRONT X/Y",u:0,v:1},{name:"SIDE Z/Y",u:2,v:1}];
-  ctx.save();ctx.setTransform(dpr,0,0,dpr,0,0);
-  ctx.fillStyle="rgba(255,255,255,.94)";ctx.strokeStyle="rgba(93,73,100,.22)";ctx.lineWidth=1;
-  ctx.beginPath();ctx.roundRect(x0-5,y0-34,total+10,size+40,9);ctx.fill();ctx.stroke();
-  ctx.font="bold 11px sans-serif";ctx.textAlign="left";ctx.fillStyle="#6e586d";
-  ctx.fillText(`A — дан · B — ${round.stackPlacement==="above"?"сверху":"снизу"}`,x0,y0-20);
-  const part=v=>Math.abs(v)===2?"1":Math.abs(v)===1?"½":"¼";
-  const signed=v=>(v>0?"+":"−")+part(v);
-  ctx.font="10px sans-serif";ctx.fillText(`B: X ${signed(rel[0])} · Y ${signed(rel[1])} · Z ${signed(rel[2])} куба`,x0,y0-7);
-  views.forEach((v,i)=>{
-    const x=x0+i*(size+gap),y=y0,unit=(size-2*pad)/5,cx=x+size/2,cy=y+size/2;
-    ctx.fillStyle="rgba(82,105,124,.18)";ctx.strokeStyle="#566b79";ctx.setLineDash([]);
-    ctx.fillRect(cx-unit,cy-unit,2*unit,2*unit);ctx.strokeRect(cx-unit,cy-unit,2*unit,2*unit);
-    const bx=cx+rel[v.u]*unit,by=cy-rel[v.v]*unit;
-    ctx.strokeStyle="#db6f91";ctx.lineWidth=2;ctx.setLineDash([4,3]);
-    ctx.strokeRect(bx-unit,by-unit,2*unit,2*unit);ctx.setLineDash([]);
-    ctx.font="bold 10px sans-serif";ctx.fillStyle="#40535f";ctx.fillText("A",cx-3,cy+3);
-    ctx.fillStyle="#c65176";ctx.fillText("B",bx-3,by+3);
-    ctx.font="9px sans-serif";ctx.textAlign="center";ctx.fillStyle="#756572";
-    ctx.fillText(v.name,x+size/2,y+size-3);ctx.textAlign="left";
+  const dock=$("#stackProjectionDock"),title=$("#stackProjectionTitle"),cvp=$("#stackProjectionCanvas");
+  dock.classList.remove("hidden");
+  const fmt=v=>{
+    const n=Math.round(v/2*100)/100;return (n>0?"+":"")+String(n).replace("-","−");
+  };
+  const task=round.stackXray?"XRAY: нарисовать весь B — все 12 рёбер":"рисовать только видимые части B";
+  title.textContent=`B ${round.stackPlacement==="above"?"СВЕРХУ":"СНИЗУ"} · размер ${round.stackScale}× · поворот ${round.stackTurnDeg>0?"+":""}${round.stackTurnDeg}° · ${task} · ΔX ${fmt(round.stackRelation[0])}, ΔY ${fmt(round.stackRelation[1])}, ΔZ ${fmt(round.stackRelation[2])} куба`;
+  title.classList.toggle("xray",round.stackXray);
+  const w=Math.max(240,cvp.clientWidth||dock.clientWidth-20),h=Math.max(100,cvp.clientHeight||142);
+  cvp.width=Math.round(w*dpr);cvp.height=Math.round(h*dpr);
+  const g=cvp.getContext("2d");g.setTransform(dpr,0,0,dpr,0,0);g.clearRect(0,0,w,h);
+  const views=[{name:"СВЕРХУ",u:0,v:2,axes:"X →  ·  Z ↑"},
+    {name:"СПЕРЕДИ",u:0,v:1,axes:"X →  ·  Y ↑"},{name:"СБОКУ",u:2,v:1,axes:"Z →  ·  Y ↑"}];
+  const gap=6,cellW=(w-gap*2)/3,top=16,bottom=h-14;
+  const hull=pts=>{
+    const q=pts.slice().sort((a,b)=>a.x-b.x||a.y-b.y),cross=(o,a,b)=>(a.x-o.x)*(b.y-o.y)-(a.y-o.y)*(b.x-o.x);
+    const lo=[],hi=[];for(const p of q){while(lo.length>1&&cross(lo.at(-2),lo.at(-1),p)<=0)lo.pop();lo.push(p);}
+    for(let i=q.length-1;i>=0;i--){const p=q[i];while(hi.length>1&&cross(hi.at(-2),hi.at(-1),p)<=0)hi.pop();hi.push(p);}
+    lo.pop();hi.pop();return lo.concat(hi);
+  };
+  views.forEach((view,i)=>{
+    const x=i*(cellW+gap),rawA=round.stackAnchorWorld.map(p=>({x:p[view.u],y:-p[view.v]})),
+      rawB=round.stackTargetWorld.map(p=>({x:p[view.u],y:-p[view.v]})),all=rawA.concat(rawB);
+    const minX=Math.min(...all.map(p=>p.x)),maxX=Math.max(...all.map(p=>p.x));
+    const minY=Math.min(...all.map(p=>p.y)),maxY=Math.max(...all.map(p=>p.y));
+    const unit=Math.min((cellW-18)/(maxX-minX+1),(bottom-top)/(maxY-minY+1));
+    const ox=x+cellW/2-(minX+maxX)/2*unit,oy=(top+bottom)/2-(minY+maxY)/2*unit;
+    const map=p=>({x:ox+p.x*unit,y:oy+p.y*unit}),A=rawA.map(map),B=rawB.map(map);
+    g.save();g.beginPath();g.rect(x,top-13,cellW,bottom-top+26);g.clip();
+    g.strokeStyle="rgba(95,83,98,.10)";g.lineWidth=1;
+    for(let n=Math.floor(minX)-1;n<=Math.ceil(maxX)+1;n++){g.beginPath();g.moveTo(ox+n*unit,top);g.lineTo(ox+n*unit,bottom);g.stroke();}
+    for(let n=Math.floor(minY)-1;n<=Math.ceil(maxY)+1;n++){g.beginPath();g.moveTo(x,oy+n*unit);g.lineTo(x+cellW,oy+n*unit);g.stroke();}
+    const body=(pts,fill,stroke,width)=>{
+      const hp=hull(pts);g.beginPath();hp.forEach((p,j)=>j?g.lineTo(p.x,p.y):g.moveTo(p.x,p.y));g.closePath();g.fillStyle=fill;g.fill();
+      g.strokeStyle=stroke;g.lineWidth=width;g.setLineDash([]);
+    };
+    body(A,"rgba(75,135,183,.23)","#496d87",1.4);
+    for(const e of CUBE_EDGES){g.beginPath();g.moveTo(A[e.a].x,A[e.a].y);g.lineTo(A[e.b].x,A[e.b].y);g.stroke();}
+    body(B,"rgba(224,87,132,.18)","#d24f7b",2);
+    for(const e of CUBE_EDGES){g.beginPath();g.moveTo(B[e.a].x,B[e.a].y);g.lineTo(B[e.b].x,B[e.b].y);g.stroke();}
+    const centre=pts=>({x:pts.reduce((s,p)=>s+p.x,0)/8,y:pts.reduce((s,p)=>s+p.y,0)/8});
+    const ca=centre(A),cb=centre(B);g.font="bold 11px sans-serif";g.textAlign="center";
+    g.fillStyle="#35566e";g.fillText("A",ca.x,ca.y+4);g.fillStyle="#b93664";g.fillText("B",cb.x,cb.y+4);g.restore();
+    g.font="bold 10px sans-serif";g.textAlign="center";g.fillStyle="#5b4d59";g.fillText(view.name,x+cellW/2,10);
+    g.font="9px sans-serif";g.fillStyle="#82727f";g.fillText(view.axes,x+cellW/2,h-2);
   });
-  ctx.restore();
 }
 function drawCameraPoint(){
   if(!round||!studyRun||!showCameraPoint||round.mode==="cylinder") return;
@@ -3558,7 +3707,7 @@ function drawScene(){
         ctx.beginPath(); ctx.moveTo(g.pa.x,g.pa.y); ctx.lineTo(g.pb.x,g.pb.y); ctx.stroke();
       }
       ctx.setLineDash([]);
-    }else if(round.twist!=="maru" && round.mode!=="cylinder") for(const c of round.cubes){
+    }else if(round.twist!=="maru" && round.mode!=="cylinder" && round.mode!=="stack") for(const c of round.cubes){
       ctx.strokeStyle="rgba(120,100,120,.3)"; ctx.lineWidth=1.5; ctx.setLineDash([3,6]);
       for(const e of c.edges){
         if(e.inShown || e.visible) continue;
@@ -4340,7 +4489,11 @@ function updateHud(){
     ? tr(`ラウンド ${roundIdx+1}`,`Round ${roundIdx+1}`)     // れんしゅうは終わりがないので分母なし
     : tr(`ラウンド ${roundIdx+1} / ${totalRounds}`,`Round ${roundIdx+1} / ${totalRounds}`);
   $("#practiceChip").classList.toggle("hidden", !round.practice);
-  const playHint = round.practice
+  const playHint = round.mode==="stack"
+    ? (round.stackXray
+      ? "XRAY / ПРОЕКЦИЯ: постройте куб B целиком — все 12 рёбер, включая закрытые и невидимые."
+      : "По отдельному окну проекций постройте только видимые части куба B.")
+    : round.practice
     ? tr("うすいガイドをなぞって、パースのかんかくをつかもう🌱","Trace the faint guides to get a feel for perspective 🌱")
     : round.twist==="maru"
       ? tr("その直線が直径！フリーハンドでまんまるな円をかこう","That line is the diameter — draw a perfect circle freehand!")
@@ -4595,6 +4748,7 @@ function startGame(m, opts){
   studyRun   = (m==="study" || m==="cylinder" || m==="stack");
   $("#btnCameraPoint").classList.toggle("hidden",!studyRun || m==="cylinder");
   $("#btnCylinderVP").classList.toggle("hidden",m!=="cylinder");
+  $("#stackProjectionDock").classList.toggle("hidden",m!=="stack");
   $("#btnCylinderVP").textContent=`${cylinderVPCount} VP ⇄ ${cylinderVPCount===3?2:3} VP`;
   refreshCameraPointButton();
   // れんしゅうは終わりなし＝結果画面を出さない（やめるまで好きなだけ描ける）
@@ -5655,6 +5809,7 @@ function toMenu(){
   hideJudgeHint();
   setState("menu");
   round=null;
+  $("#stackProjectionDock").classList.add("hidden");
   $("#finalOverlay").classList.add("hidden");
   $("#modePopup").classList.add("hidden");
   resetView(); touchPts.clear(); pinch=null;

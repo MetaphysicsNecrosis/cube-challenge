@@ -22,13 +22,19 @@ Development check: `node tests/cylinders.cjs`.
 
 ## Two-cube construction trainer
 
-Choose **🧊↕🧊 Два куба**. The perspective view contains only the completed
-reference cube **A**. Three small orthographic views (`TOP X/Z`, `FRONT X/Y`,
-`SIDE Z/Y`) show whether the missing cube **B** belongs above or below A and
-its offset along all three axes. The perspective face of B is never supplied.
-The camera uses deliberately steep angles; both cubes share all three
-vanishing points. The mode has no timer or leaderboard, and judging reveals
-the intended visible edges and perspective guides.
+Choose **🧊↕🧊 Два куба**. The perspective view contains only the completed,
+face-coloured reference cube **A**. A separate panel in the lower-right corner
+renders three gridded orthographic views (`TOP X/Z`, `FRONT X/Y`, `SIDE Z/Y`).
+They define B's above/below placement, XYZ offset, size (`0.5×` to `2×`) and
+rotation around the shared vertical axis without supplying a perspective face.
+A rotated B has its own two horizontal vanishing points while both cubes share
+the vertical VP; judging reveals both perspective systems.
+
+When B would be mostly hidden, the task explicitly switches to **XRAY /
+ПРОЕКЦИЯ** and asks for all 12 edges, including occluded ones. Other rounds ask
+only for physically visible parts. The generator rejects tasks where B is too
+small on screen or the construction leaves the drawable frame. This mode has
+no timer or leaderboard.
 
 Development check: `node tests/two-cubes.cjs`.
 
